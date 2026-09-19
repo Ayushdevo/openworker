@@ -32,7 +32,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import fsops, protocol as P
+from . import fsops, protocol as P, toolcalls
 from .executor import LocalExecutor
 
 RUNNER_VERSION = "0.1.0"
@@ -122,8 +122,8 @@ class Daemon:
     def _reply(self, req_id: str, value: dict[str, Any]) -> None:
         self._emit(P.result(req_id, value), record=True)
 
-    def _fail(self, req_id: Optional[str], code: int, message: str) -> None:
-        self._emit(P.error(req_id, code, message), record=req_id is not None)
+    def _fail(self, req_id: Optional[str], code: int, message: str, data: Optional[dict] = None) -> None:
+        self._emit(P.error(req_id, code, message, data), record=req_id is not None)
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         self._emit(P.notification(method, params), record=False)
@@ -277,6 +277,16 @@ class Daemon:
             }
         if method == "proc.run":
             return self._proc_run(params)
+        if method == "tool.call":
+            # One of OpenWorker's own workspace tools, run here with the same code the
+            # in-process tool runs. The value goes back as it is (a dict, a list, a string).
+            value = toolcalls.call(
+                str(params.get("name") or ""),
+                dict(params.get("args") or {}),
+                workspace=str(params.get("workspace") or self.default_cwd),
+                roots=params.get("roots") or None,
+            )
+            return {"value": value}
         if method.startswith("fs."):
             path = self._resolve(params)
             try:
@@ -306,6 +316,8 @@ class Daemon:
             self._reply(req_id, self._dispatch(req_id, method, params))
         except P.RunnerError as exc:
             self._fail(req_id, exc.code, exc.message)
+        except toolcalls.ToolRaised as exc:
+            self._fail(req_id, P.TOOL_RAISED, str(exc), {"type": exc.type_name})
         except (ValueError, TypeError) as exc:
             self._fail(req_id, P.INVALID_PARAMS, str(exc))
         except Exception as exc:  # never let one request take the daemon down

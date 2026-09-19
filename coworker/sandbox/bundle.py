@@ -20,9 +20,38 @@ _PACKAGE = "owrunner"  # the name the runner package has inside the zipapp
 _MAIN = f"from {_PACKAGE}.__main__ import main\nraise SystemExit(main())\n"
 
 
+# aisuite's file and git toolkits are plain standard-library code except for one import of
+# the `tool` decorator, which only their factory functions use. The runner calls the
+# toolkit classes directly, so a do-nothing stand-in is enough inside the packed file.
+_AISUITE_TOOLKITS = ("files", "git")
+_AGENTS_STANDIN = '''"""Stand-in for `aisuite.agents` inside the packed runner (see bundle.py)."""
+
+
+class ToolMetadata:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+def tool(fn=None, **_kwargs):
+    return fn if fn is not None else (lambda f: f)
+'''
+
+
 def _sources() -> list[Path]:
     root = Path(__file__).parent / "runner"
     return sorted(p for p in root.glob("*.py"))
+
+
+def _toolkit_sources() -> list[Path]:
+    import importlib.util
+
+    found = []
+    for name in _AISUITE_TOOLKITS:
+        spec = importlib.util.find_spec(f"aisuite.toolkits.{name}")
+        if spec is None or not spec.origin or not spec.origin.endswith(".py"):
+            raise RuntimeError(f"cannot find the source of aisuite.toolkits.{name} to pack into the tool runner")
+        found.append(Path(spec.origin))
+    return found
 
 
 def runner_dir() -> Path:
@@ -33,8 +62,9 @@ def build_runner_zipapp(dest_dir: Optional[Path] = None) -> Path:
     """Build (or reuse) the runner zipapp and return its path. The name carries a hash of
     the sources, so an upgraded or edited runner never reuses a stale file."""
     sources = _sources()
-    digest = hashlib.sha256()
-    for src in sources:
+    toolkits = _toolkit_sources()
+    digest = hashlib.sha256(_AGENTS_STANDIN.encode())
+    for src in (*sources, *toolkits):
         digest.update(src.name.encode())
         digest.update(src.read_bytes())
     dest_dir = Path(dest_dir) if dest_dir is not None else runner_dir()
@@ -47,6 +77,11 @@ def build_runner_zipapp(dest_dir: Optional[Path] = None) -> Path:
         zf.writestr("__main__.py", _MAIN)
         for src in sources:
             zf.write(src, f"{_PACKAGE}/{src.name}")
+        # `from ..agents import ...` inside the toolkits resolves to this stand-in.
+        zf.writestr(f"{_PACKAGE}/agents.py", _AGENTS_STANDIN)
+        zf.writestr(f"{_PACKAGE}/aisuite_toolkits/__init__.py", "")
+        for src in toolkits:
+            zf.write(src, f"{_PACKAGE}/aisuite_toolkits/{src.name}")
     os.chmod(tmp, 0o644)
     os.replace(tmp, target)
     return target

@@ -342,7 +342,7 @@ def build_engine(
     executor = sandbox_workspace.executor if sandbox_workspace is not None else None
     todo = TodoList()
     context = AgentContext(
-        workspace=ws, executor=executor, todo=todo, roots=root_list or None
+        workspace=ws, executor=executor, todo=todo, roots=root_list or None, sandbox=sandbox_workspace
     )
 
     registry = ToolRegistry()

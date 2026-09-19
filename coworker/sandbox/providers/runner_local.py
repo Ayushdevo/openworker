@@ -38,7 +38,7 @@ class RunnerLocalProvider:
 
     def create(self) -> None:
         self._daemon = subprocess.Popen(
-            [sys.executable, str(self._runner), "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent"],
+            [sys.executable, "-S", str(self._runner), "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -53,7 +53,7 @@ class RunnerLocalProvider:
             time.sleep(0.02)
 
     def open_runner(self) -> Transport:
-        argv = [sys.executable, str(self._runner), "attach", "--socket", self.socket_path]
+        argv = [sys.executable, "-S", str(self._runner), "attach", "--socket", self.socket_path]
         if self._relay_silence is not None:
             argv += ["--silence-seconds", str(self._relay_silence)]
         return PipeTransport(

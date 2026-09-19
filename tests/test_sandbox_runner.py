@@ -57,6 +57,8 @@ def test_runner_uses_only_the_standard_library():
             else:
                 continue  # relative imports stay inside the package
             for name in names:
+                if source.name == "toolcalls.py" and name.startswith("aisuite.toolkits."):
+                    continue  # only when run from a checkout; the packed file carries its own copy
                 assert name.split(".")[0] in allowed, f"{source.name} imports {name}"
 
 

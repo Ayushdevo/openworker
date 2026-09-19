@@ -21,6 +21,7 @@ import aisuite as ai
 
 from .agents.base import AgentContext
 from .risk import RiskClass
+from .sandbox.proxy import proxy_tools
 from .tools.files import file_tools
 from .tools.git import git_tools
 from .tools.search import search_tools
@@ -97,6 +98,16 @@ def _describe_edit_tools(tools: list) -> list:
     return tools
 
 
+def _placed(context: AgentContext, tools: list) -> list:
+    """Where the workspace tools run. In `direct` mode (and whenever the session has no tool
+    runner) they are returned untouched. With a runner, each is replaced by a proxy that has
+    the same definition and sends only the execution into the sandbox."""
+    sandbox = context.sandbox
+    if sandbox is None or getattr(sandbox, "client", None) is None:
+        return tools
+    return proxy_tools(tools, sandbox, root=str(context.workspace), roots=context.roots)
+
+
 def _code_files(context: AgentContext) -> list:
     """Repo-oriented files: line-numbered/windowed `read_file`. Our `grep` and windowed
     `read_file` replace aisuite's slower `search_files` / `read_file`/`read_file_lines`.
@@ -115,7 +126,7 @@ def _code_files(context: AgentContext) -> list:
             if getattr(t, "__name__", "") not in replaced
         ]
     )
-    return [*files, *file_tools(ws, roots=context.roots)]
+    return _placed(context, [*files, *file_tools(ws, roots=context.roots)])
 
 
 def _files(context: AgentContext) -> list:
@@ -136,16 +147,16 @@ def _files(context: AgentContext) -> list:
             if getattr(t, "__name__", "") not in replaced
         ]
     )
-    return [*files, *file_tools(ws, roots=context.roots)]
+    return _placed(context, [*files, *file_tools(ws, roots=context.roots)])
 
 
 def _git(context: AgentContext) -> list:
     ws = str(context.workspace)
-    return [*ai.toolkits.git(root=ws), *git_tools(ws)]  # git_status, git_diff, git_log
+    return _placed(context, [*ai.toolkits.git(root=ws), *git_tools(ws)])  # git_status, git_diff, git_log
 
 
 def _search(context: AgentContext) -> list:
-    return search_tools(str(context.workspace))  # grep (ripgrep, .gitignore-aware)
+    return _placed(context, search_tools(str(context.workspace)))  # grep (ripgrep, .gitignore-aware)
 
 
 def _shell(context: AgentContext) -> list:

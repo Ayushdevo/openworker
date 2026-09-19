@@ -39,6 +39,7 @@ UNKNOWN_TASK = 3
 FS_ERROR = 4
 VERSION_MISMATCH = 5
 RUNNER_RESTARTED = 6  # raised by the client, never sent by the runner
+TOOL_RAISED = 7  # a workspace tool raised; data carries the error's type name
 
 
 def encode(obj: dict[str, Any]) -> bytes:
