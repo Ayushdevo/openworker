@@ -338,7 +338,11 @@ def build_engine(
         model_settings = {**(model_settings or {}), "reasoning_effort": config.reasoning_effort}
     # The session's workspace decides where commands run: in this process (`direct`, the
     # default, today's behaviour) or in a tool runner behind a sandbox provider.
-    sandbox_workspace = open_workspace(cwd=ws) if ws is not None else None
+    sandbox_workspace = (
+        open_workspace(cwd=ws, roots=root_list or None, session_id=session_id or "", agent=agent.name)
+        if ws is not None
+        else None
+    )
     executor = sandbox_workspace.executor if sandbox_workspace is not None else None
     todo = TodoList()
     context = AgentContext(
