@@ -31,11 +31,32 @@ PRINT_1000 = (
 )
 
 
-@pytest.fixture
-def executor(tmp_path):
-    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
-    yield ex
-    ex.close()
+# Every behaviour below is checked twice: on the in-process executor (direct mode) and on
+# the same contract served by a tool runner in another process (the sandbox path). The two
+# must not drift apart. The runner needs Unix sockets, so it is skipped on Windows.
+_EXECUTORS = ["direct"] if _WIN else ["direct", "runner"]
+
+
+@pytest.fixture(params=_EXECUTORS)
+def executor(request, tmp_path):
+    if request.param == "direct":
+        ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+        yield ex
+        ex.close()
+        return
+    from coworker.sandbox.providers.runner_local import RunnerLocalProvider
+    from coworker.sandbox.workspace import RunnerWorkspace
+
+    ws = RunnerWorkspace(RunnerLocalProvider(cwd=tmp_path, runner_path=_runner_zipapp(tmp_path)), cwd=tmp_path)
+    ws.executor.default_timeout = 10
+    yield ws.executor
+    ws.close()
+
+
+def _runner_zipapp(tmp_path):
+    from coworker.sandbox.bundle import build_runner_zipapp
+
+    return build_runner_zipapp(tmp_path.parent / "runner-dist")
 
 
 def test_cwd_persists_across_calls(executor, tmp_path):

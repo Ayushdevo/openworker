@@ -35,7 +35,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -227,7 +227,14 @@ class LocalExecutor(Executor):
         finally:
             self._queue.put(None)  # EOF sentinel
 
-    def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]:
+    def run(
+        self,
+        command: str,
+        timeout: Optional[float] = None,
+        on_output: Optional[Callable[[str], None]] = None,
+    ) -> dict[str, Any]:
+        """`on_output`, when given, is called with each line as it arrives (the tool runner
+        uses it for the live view). The returned result is the same either way."""
         if self._proc.poll() is not None:
             # Shell exited (e.g. hard-closed after a prior command's timeout). Respawn so
             # the session self-heals rather than wedging every future command.
@@ -293,6 +300,11 @@ class LocalExecutor(Executor):
                     self.cwd = cwd
                 break
             lines.append(item)
+            if on_output is not None:
+                try:
+                    on_output(item)
+                except Exception:  # the live view must never break the command
+                    on_output = None
 
         output = "".join(lines)
         truncated = len(output) > self.max_output_chars

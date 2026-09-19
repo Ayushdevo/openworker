@@ -48,7 +48,7 @@ from .tools.toolreq import request_tool_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
-from .tools.shell import LocalExecutor
+from .sandbox.workspace import open_workspace
 from .tools.todo import TodoList
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
@@ -336,7 +336,10 @@ def build_engine(
     # OPE-176: the reasoning-effort level takes the same route; providers translate it.
     if config.reasoning_effort and "reasoning_effort" not in (model_settings or {}):
         model_settings = {**(model_settings or {}), "reasoning_effort": config.reasoning_effort}
-    executor = LocalExecutor(cwd=ws) if ws is not None else None
+    # The session's workspace decides where commands run: in this process (`direct`, the
+    # default, today's behaviour) or in a tool runner behind a sandbox provider.
+    sandbox_workspace = open_workspace(cwd=ws) if ws is not None else None
+    executor = sandbox_workspace.executor if sandbox_workspace is not None else None
     todo = TodoList()
     context = AgentContext(
         workspace=ws, executor=executor, todo=todo, roots=root_list or None
@@ -699,6 +702,7 @@ def build_engine(
     if _compaction_overrides:
         engine.compaction_settings = lambda: dict(_compaction_overrides)
     engine.executor = executor  # type: ignore[attr-defined]
+    engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
     engine.agent_name = agent.name  # type: ignore[attr-defined]
     engine.roots = root_list  # type: ignore[attr-defined]  # shared list; Slice C mutates in place
