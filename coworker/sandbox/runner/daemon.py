@@ -369,6 +369,10 @@ class Daemon:
             os.unlink(self.socket_path)
         except OSError:
             pass
+        try:
+            os.rmdir(os.path.dirname(self.socket_path))  # only if the socket had its own folder
+        except OSError:
+            pass
 
     def serve_forever(self) -> None:
         path = self.socket_path
