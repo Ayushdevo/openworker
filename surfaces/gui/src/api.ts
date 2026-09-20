@@ -339,6 +339,9 @@ export interface BoardWakeRow {
   title?: string;
   actor?: string;
   to?: string;
+  from?: string;
+  assignee?: string;
+  refs?: string[];
   note?: string;
   // `waiting` only: a worker is waiting on the lead's decision for this tool call.
   tool?: string;
@@ -412,6 +415,10 @@ export interface BoardItem {
   links: { kind: string; item: number }[];
   // Blocked rows only: the latest blocker comment, clamped ("need tfvars…").
   blocker?: string;
+  waiting?: { prompt_id: string; tool: string; preview: string };
+  status?: string;
+  status_ts?: string;
+  created_ts?: string;
 }
 
 export interface Board {
@@ -429,6 +436,14 @@ export interface JournalCase {
 export async function getBoard(sessionId: string): Promise<Board> {
   const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/board`);
   return res.json();
+}
+
+export async function getTeamSummary(sessionId: string, teamId: string): Promise<import("./teamView").TeamSummary> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/teams/${encodeURIComponent(teamId)}/summary`);
+  if (!res.ok) throw new Error("Team summary unavailable");
+  const data = await res.json();
+  if (!Array.isArray(data.items) || !Array.isArray(data.workers) || !data.lead || !data.totals || !data.counts) throw new Error("Team summary unavailable");
+  return data;
 }
 
 // One event in an item's merged timeline (the detail pane renders the item's

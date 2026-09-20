@@ -39,10 +39,10 @@ test("the decomposition gate shows items with criteria; approval lands them on t
   await page.getByTestId("itemsreq-approve").click();
   await expect(page.getByText(/Items created on the board/)).toBeVisible();
   // Sections start collapsed (a count chip is the maximum signal) — but the lead's
-  // one-time [Board · N items](board:) chip expands the drawer's Board section.
+  // one-time board chip now opens the Work pane.
   await expect(page.getByTestId("board-rail")).toHaveCount(0);
   await page.getByTestId("board-chip").click();
-  await expect(page.getByTestId("board-rail")).toBeVisible();
+  await expect(page.getByTestId("team-view")).toBeVisible();
 });
 
 test("typing while a gate is pending sends the reply as feedback to the lead", async ({
@@ -67,24 +67,15 @@ test("a team update renders collapsed; expanded it groups by work item with note
   await page.goto("/");
   await page.getByPlaceholder(/Ask the coworker/).fill("board wake");
   await page.getByRole("button", { name: "Send" }).click();
-  const card = page.getByTestId("boardwake-card");
-  await expect(card).toBeVisible();
-  await expect(card).toContainText("Team update");
-  // The summary says what needs action, in words — not a count per event type.
-  await expect(page.getByTestId("boardwake-summary")).toHaveText("#2 is ready for review · 1 more");
-  // collapsed by default: ambient awareness, not reading assignment
-  await expect(page.getByTestId("boardwake-body")).toHaveCount(0);
-  await expect(card).not.toContainText("029f9f7");
-  await page.getByTestId("boardwake-toggle").click();
-  const body = page.getByTestId("boardwake-body");
-  await expect(body).toBeVisible();
-  const review = page.getByTestId("boardwake-group-2");
-  await expect(review).toContainText("#2 Statements page");
-  await expect(review).toContainText("Ready for review");
-  await expect(review).toContainText("webb handed it off for review");
-  // the hand-off note is previewed in place — no click per row
-  await expect(review).toContainText("029f9f7");
-  await expect(page.getByTestId("boardwake-group-5")).toContainText("nia filed it");
+  const line = page.getByTestId("team-update");
+  await expect(line).toBeVisible();
+  await expect(line).toContainText("Team update");
+  await expect(line).not.toHaveAttribute("open");
+  await line.locator("summary").click();
+  await expect(line).toHaveAttribute("open", "");
+  await expect(line).toContainText("Fix refund rounding");
+  await expect(line).toContainText("Add regression coverage");
+  await expect(line).not.toContainText("Sample note");
 });
 
 test("declining the split returns feedback to the lead", async ({ page }) => {
@@ -333,4 +324,3 @@ test("a coworker may ask for a service to be connected; not now is a plain outco
   await page.getByTestId("connreq-decline").click();
   await expect(page.getByText("route that step through myself")).toBeVisible();
 });
-

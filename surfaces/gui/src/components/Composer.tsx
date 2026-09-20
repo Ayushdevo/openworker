@@ -122,6 +122,7 @@ interface Props {
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
+  teamSlot?: ReactNode;
   // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
   onOpenMemory?: () => void;
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
@@ -581,6 +582,7 @@ export function Composer(props: Props) {
         </div>
       )}
 
+      {props.teamSlot}
       <div
         className={
           "composer max-w-3xl mx-auto rounded-2xl border border-ink/[0.08] bg-panel shadow-[0_1px_2px_rgba(0,0,0,0.03),0_4px_14px_-10px_rgba(0,0,0,0.08)]" +

@@ -58,7 +58,7 @@ test("a scenario opens the real app on a saved moment; answers are printed, not 
 
 test("an attended scenario replays its live card and fills the rail", async ({ page }) => {
   await page.goto("/?scenario=lead-team-running-approval#/s/scn-lead-3b");
-  await expect(page.getByTestId("boardwake-card")).toBeVisible();
+  await expect(page.getByTestId("team-update")).toBeVisible();
   await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible();
   await page.getByRole("button", { name: "Allow once" }).click();
   await page.getByTestId("scenario-sent-toggle").click();

@@ -4,10 +4,6 @@ import {
   announceInboxUnlock,
   createTempWorkspace,
   finalizeAutomationRun,
-  boardComment,
-  boardTransition,
-  fetchBoardAttachment,
-  getBoardItem,
   getArtifacts,
   getBoard,
   type Board,
@@ -110,7 +106,10 @@ import { ToolRequestCard } from "./components/ToolRequestCard";
 import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
-import { BoardOverlay } from "./components/BoardPanel";
+import { TeamView, TeamQuickLook } from "./components/TeamView";
+import type { TeamSummary } from "./teamView";
+import { getTeamSummary } from "./api";
+import { TaskBoardContext, OPEN_TASK_EVENT } from "./components/TaskChip";
 import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
@@ -390,7 +389,11 @@ export function App() {
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   // Agent teams (OPE-96): board for the current session's workspace space.
   const [board, setBoard] = useState<Board | null>(null);
-  const [boardOpen, setBoardOpen] = useState(false);
+  const boardSessionRef = useRef(sessionId);
+  boardSessionRef.current = sessionId;
+  const [boardOwner, setBoardOwner] = useState("");
+  const [teamViewOpen, setTeamViewOpen] = useState(false);
+  const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
   // A rail row click deep-opens the overlay on that item's detail pane.
   const [boardDetailId, setBoardDetailId] = useState<number | null>(null);
   // # team chat overlay — opened from the team entry's chat row.
@@ -472,7 +475,7 @@ export function App() {
   // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
   // RightRail opens the viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
+    const show = () => { setRailHidden(false); setTeamViewOpen(false); };
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
@@ -483,6 +486,7 @@ export function App() {
     const show = () => {
       setRailHidden(false);
       setBoardRailKey((k) => k + 1);
+      setBoardDetailId(null); setTeamViewOpen(true);
     };
     window.addEventListener("ocw-open-board", show);
     return () => window.removeEventListener("ocw-open-board", show);
@@ -967,6 +971,10 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          if (d.display?.team_created?.team_id) {
+            const c = d.display.team_created;
+            setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);
+          }
           setItems((p) =>
             updateLastTool(
               p,
@@ -1205,14 +1213,22 @@ export function App() {
       setBoard(null);
       return;
     }
-    getBoard(sessionId).then(setBoard).catch(() => setBoard(null));
+    let canceled = false;
+    getBoard(sessionId).then(b => { if (!canceled) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => { if (!canceled) setBoard(null); });
+    return () => { canceled = true; };
   }, [agent, surface, sessionId, browserRefreshKey, running]);
 
-  const refreshBoard = () => getBoard(sessionId).then(setBoard).catch(() => {});
-  const moveBoardItem = async (item: number, to: string, comment = "") => {
-    await boardTransition(sessionId, item, to, comment);
-    await refreshBoard();
-  };
+  const refreshBoard = () => getBoard(sessionId).then(b => { if (boardSessionRef.current === sessionId) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => {});
+  useEffect(() => {
+    const open = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.sessionId !== sessionId || d.space !== board?.space || !board?.items.some(i => i.id === d.id)) return;
+      setBoardDetailId(d.id); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false);
+    };
+    window.addEventListener(OPEN_TASK_EVENT, open);
+    return () => window.removeEventListener(OPEN_TASK_EVENT, open);
+  }, [sessionId, board]);
+
 
   // Seventeenth pass: the drawer's Team panel — this session's staff (workers whose
   // lead is the current session). The sidebar shows ONE entry per team; members live here.
@@ -1220,6 +1236,18 @@ export function App() {
   const teamMembers = sessions.filter(
     (s) => s.team?.role === "worker" && s.team.lead_session === sessionId,
   );
+
+  useEffect(() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamSummary(null); }, [sessionId]);
+  const activeTeamId = curSession?.team?.team_id;
+  useEffect(() => {
+    if (!activeTeamId || surface !== "session") { setTeamSummary(null); return; }
+    let canceled = false;
+    getTeamSummary(sessionId, activeTeamId).then(s => {
+      if (!canceled) { setTeamSummary(s); setBoard(b => b?.space === s.space ? { ...b, items: [...b.items.filter(i => !s.items.some(x => x.id === i.id)), ...s.items] } : b); }
+    }).catch(() => { if (!canceled) setTeamSummary(null); });
+    return () => { canceled = true; };
+  }, [sessionId, activeTeamId, surface, sessions, browserRefreshKey, running]);
+  const openTeamView = (id?: number) => { setBoardDetailId(id ?? null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); };
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
@@ -1795,6 +1823,7 @@ export function App() {
   }
 
   return (
+    <TaskBoardContext.Provider value={{ board: boardOwner === sessionId ? board : null, sessionId }}>
     <div
       className={
         "app" +
@@ -2265,6 +2294,7 @@ export function App() {
               </div>
             )}
             <Composer
+              teamSlot={curSession?.team?.role === "lead" && teamSummary?.lead_session === sessionId ? <TeamQuickLook key={sessionId} summary={teamSummary} onOpen={openTeamView} machine={curSession?.machine_name} /> : undefined}
               mode={mode}
               // §11.6: a worker's approvals follow its lead — the picker is read-only for it.
               followsLead={curSession?.team?.role === "worker"}
@@ -2397,6 +2427,7 @@ export function App() {
             />
                   </div>
           <RightRail
+            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
@@ -2415,10 +2446,10 @@ export function App() {
             openAccessKey={accessKey}
             onOpenIntegrations={() => openSettings("connectors")}
             board={board}
-            onExpandBoard={() => setBoardOpen(true)}
+            onExpandBoard={() => setTeamViewOpen(true)}
             onOpenBoardItem={(id) => {
               setBoardDetailId(id);
-              setBoardOpen(true);
+              setTeamViewOpen(true);
             }}
             /* team serializes as {} for plain sessions — lead-ness needs an actual
                role, else every solo session loses its Progress panel (owner-hit
@@ -2435,38 +2466,7 @@ export function App() {
             onOpenWorker={(w) => void selectSession(w.session_id, w.workspace, w.agent)}
             openBoardKey={boardRailKey}
           />
-          {boardOpen && board && board.space && (
-            <BoardOverlay
-              board={board}
-              onClose={() => {
-                setBoardOpen(false);
-                setBoardDetailId(null);
-              }}
-              onTransition={moveBoardItem}
-              onComment={(item, body) => boardComment(sessionId, item, body)}
-              loadItem={(id) => getBoardItem(sessionId, id)}
-              loadAttachment={(stored) => fetchBoardAttachment(sessionId, stored)}
-              onOpenWorker={(actor) => {
-                // The assignee is a team actor whose worker session the sidebar
-                // already knows — jump straight into its transcript.
-                const match =
-                  sessions.find(
-                    (s) =>
-                      s.team?.role === "worker" &&
-                      s.team?.actor === actor &&
-                      s.workspace === board.space
-                  ) ||
-                  sessions.find(
-                    (s) => s.team?.role === "worker" && s.team?.actor === actor
-                  );
-                if (!match) return;
-                setBoardOpen(false);
-                setBoardDetailId(null);
-                void selectSession(match.session_id, match.workspace, match.agent);
-              }}
-              initialItem={boardDetailId}
-            />
-          )}
+
         </div>
       </div>
       )}
@@ -2517,6 +2517,7 @@ export function App() {
         />
       )}
     </div>
+    </TaskBoardContext.Provider>
   );
 }
 

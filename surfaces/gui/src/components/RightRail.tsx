@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -18,6 +17,7 @@ import {
 import type { SessionInfo, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { BoardSection } from "./BoardPanel";
+
 import { Icon } from "./Icon";
 import { formatTokens, totalTokens } from "../usage";
 import type { SessionUsage, TurnUsage } from "../types";
@@ -50,6 +50,7 @@ function kindFromPath(path: string): string {
 
 interface Props {
   active: boolean;
+  teamView?: ReactNode;
   sessionId: string;
   refreshKey: number;
   toolNames: string[];
@@ -90,6 +91,7 @@ interface Props {
 
 export function RightRail({
   active,
+  teamView,
   sessionId,
   refreshKey,
   toolNames,
@@ -191,12 +193,13 @@ export function RightRail({
   // just expanded; owner-hit 2026-08-21).
   const prevPreviewOpen = useRef(false);
   useEffect(() => {
-    const open = !!selected;
+    const open = !!selected || !!teamView;
     if (open !== prevPreviewOpen.current) {
       prevPreviewOpen.current = open;
       onPreviewChange?.(open);
     }
-  }, [!!selected, onPreviewChange]);
+  }, [!!selected, !!teamView, onPreviewChange]);
+  useEffect(() => { if (teamView) { setSelected(null); setContent(null); } }, [!!teamView]);
 
   const reloadSelected = () => {
     if (!selected) return Promise.resolve();
@@ -243,8 +246,14 @@ export function RightRail({
   if (!active) return null;
 
   return (
-    <aside className={"right-rail" + (selected ? " artifact-mode" : "")}>
-      {selected ? (
+    <aside className={"right-rail" + (selected || teamView ? " artifact-mode" : "")}>
+      {teamView && <div className="team-resize-handle" role="separator" aria-label={t("teamview.resize")} aria-orientation="vertical" tabIndex={0}
+        onKeyDown={e => { if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return; e.preventDefault(); const width = e.currentTarget.parentElement!.getBoundingClientRect().width + (e.key === "ArrowLeft" ? 32 : -32); document.documentElement.style.setProperty("--team-rail-w", Math.min(window.innerWidth * .75, Math.max(320, width)) + "px"); }}
+        onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); }}
+        onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) document.documentElement.style.setProperty("--team-rail-w", Math.min(window.innerWidth * .75, Math.max(320, window.innerWidth - e.clientX)) + "px"); }}
+        onPointerUp={e => e.currentTarget.releasePointerCapture(e.pointerId)} />}
+      {teamView ? teamView :
+      selected ? (
         <ArtifactViewer
           sessionId={sessionId}
           artifact={selected}
@@ -271,36 +280,13 @@ export function RightRail({
             </RailSection>
           )}
 
-          {/* Agent teams (OPE-96): board summary — grouped by state, blocked on top.
-              Hidden entirely until the workspace has items (no chrome for plain sessions). */}
-          {board?.space && (
-            <RailSection
-              title={t("rail.board_title")}
-              count={boardChip(board, t).text}
-              countAttention={boardChip(board, t).attention}
-              open={open.board}
-              onToggle={() => setOpen({ ...open, board: !open.board })}
-              action={
-                <button
-                  className="rail-mini-btn"
-                  data-testid="board-expand"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onExpandBoard?.();
-                  }}
-                  title={t("rail.board_expand")}
-                >
-                  <Icon name="panelOpen" size={13} />
-                </button>
-              }
-            >
-              <BoardSection
-                board={board}
-                onExpand={() => onExpandBoard?.()}
-                onOpenItem={onOpenBoardItem}
-              />
-            </RailSection>
-          )}
+          {/* Standalone boards have no team icon. Keep their existing entry point;
+              staffed leads use the quick look and Team View instead. */}
+          {!isLead && board?.space && <RailSection title={t("rail.board_title")} open={open.board}
+            onToggle={() => setOpen({ ...open, board: !open.board })}
+            action={<button className="rail-mini-btn" data-testid="board-expand" onClick={onExpandBoard} title={t("rail.board_expand")}><Icon name="panelOpen" size={13} /></button>}>
+            <BoardSection board={board} onExpand={() => onExpandBoard?.()} onOpenItem={onOpenBoardItem} />
+          </RailSection>}
 
           {/* The team panel: who's working, on what, and the way into their sessions —
               the altitude-3 escape hatch, moved here from the sidebar (RECENT keeps ONE
@@ -488,17 +474,6 @@ export function RightRail({
 
 // The Board section's header chip: the attention states (blocked/review) when present,
 // otherwise a quiet active count. Full per-state summary stays on the topbar button.
-function boardChip(board: Board, t: TFunction): { text: string; attention: boolean } {
-  const counts: Record<string, number> = {};
-  for (const item of board.items) counts[item.state] = (counts[item.state] || 0) + 1;
-  const attn: string[] = [];
-  if (counts.blocked) attn.push(t("rail.board_chip_blocked", { count: counts.blocked }));
-  if (counts.review) attn.push(t("rail.board_chip_review", { count: counts.review }));
-  if (attn.length) return { text: attn.join(" · "), attention: true };
-  const active = (counts.in_progress || 0) + (counts.open || 0);
-  return { text: active ? t("rail.board_chip_active", { count: active }) : "", attention: false };
-}
-
 function ProgressSummary({ running, toolNames, todo }: { running: boolean; toolNames: string[]; todo: TodoItem[] }) {
   const { t } = useTranslation();
   if (todo.length) {

@@ -15,6 +15,8 @@ import { PreviewBlock, TitleText } from "./ApprovalCard";
 import { Icon } from "./Icon";
 
 export interface WorkerCall {
+  item_id?: number;
+  item_title?: string;
   worker?: string;
   tool: string;
   arguments?: any;
@@ -98,6 +100,7 @@ export function WorkerDecisionCard({
         </div>
         <span className="approval-scope">{t("workerdec.scope", { worker })}</span>
       </div>
+      {workerCall?.item_title && <p className="team-totals">{workerCall.item_title}</p>}
 
       <div className="workerdec-label">{t("workerdec.wants_to", { worker })}</div>
       {workerCall ? (

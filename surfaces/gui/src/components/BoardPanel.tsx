@@ -1,18 +1,9 @@
-// Agent teams (OPE-96 → detail-view rework, owner-approved mock 2026-08-17):
-//  - BoardSection: the right-rail summary (grouped by state, blocked on top)
-//  - BoardOverlay: the expanded view — a QUIET LIST grouped by the store's raw
-//    states (In progress / Awaiting review / Queued; owner ruling: no computed
-//    interpretation layer, no row buttons, no badges) + a Linear-style detail
-//    pane with the item's TIMELINE (events + comments merged — the store is an
-//    event log; the pane is its honest projection). Actions live in the pane
-//    only: Mark done / Request changes… (review), Remove (queued), Reopen.
-// Both render the same Board data App owns; mutations go through the /board
-// endpoints and act as the USER.
+// Standalone board entry point and shared task evidence/verdicts. Team View replaces
+// the old full-window overlay; mutations still use the user-authorized board API.
 import { useEffect, useState } from "react";
 import type { TFunction } from "i18next";
 import { Trans, getI18n, useTranslation } from "react-i18next";
-import type { Board, BoardItem, BoardItemDetail, BoardTimelineEvent } from "../api";
-import { Icon } from "./Icon";
+import type { Board, BoardItemDetail, BoardTimelineEvent } from "../api";
 
 // Rail display order: needs-attention first (mock UX-030: "blocked on top").
 const RAIL_GROUPS: { state: string; labelKey: string }[] = [
@@ -116,164 +107,6 @@ export function BoardSection({
   );
 }
 
-// Overlay list sections — the store's raw states, nothing computed (owner ruling
-// 2026-08-17). Blocked rows live under In progress: still that worker's item,
-// just stuck — the red dot + blocker fact carry the difference.
-const LIST_SECTIONS: { labelKey: string; states: string[] }[] = [
-  { labelKey: "board.state_in_progress", states: ["in_progress", "blocked"] },
-  { labelKey: "board.state_awaiting_review", states: ["review"] },
-  { labelKey: "board.state_queued", states: ["open"] },
-];
-
-export function BoardOverlay({
-  board,
-  onClose,
-  onTransition,
-  onComment,
-  loadItem,
-  loadAttachment,
-  onOpenWorker,
-  initialItem,
-}: {
-  board: Board;
-  onClose: () => void;
-  // (item, to, comment?) → performed as the user; App refetches on completion.
-  onTransition?: (item: number, to: string, comment?: string) => void;
-  // A pure note — never changes state; the assignee hears it through its feed.
-  onComment?: (item: number, body: string) => Promise<unknown> | void;
-  loadItem?: (id: number) => Promise<BoardItemDetail | { error: string }>;
-  loadAttachment?: (stored: string) => Promise<string | null>;
-  // Assignee link → jump into that coworker's session (closes the overlay).
-  onOpenWorker?: (actor: string) => void;
-  initialItem?: number | null;
-}) {
-  const { t } = useTranslation();
-  const [detail, setDetail] = useState<BoardItemDetail | null>(null);
-  const [showFinished, setShowFinished] = useState(false);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const openItem = async (id: number) => {
-    if (!loadItem) return;
-    const loaded = await loadItem(id);
-    if (!("error" in loaded)) setDetail(loaded);
-  };
-  useEffect(() => {
-    if (initialItem != null) void openItem(initialItem);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialItem]);
-
-  const move = async (item: number, to: string, comment?: string) => {
-    onTransition?.(item, to, comment);
-    // the pane refreshes on the next tick so the transition's board refetch lands first
-    if (detail?.id === item) setTimeout(() => void openItem(item), 350);
-  };
-  const addNote = async (item: number, body: string) => {
-    await onComment?.(item, body);
-    await openItem(item);
-  };
-
-  const finished = board.items.filter(
-    (i) => i.state === "done" || i.state === "canceled"
-  );
-  const sections = LIST_SECTIONS.map((s) => ({
-    ...s,
-    items: board.items.filter((i) => s.states.includes(i.state)),
-  })).filter((s) => s.items.length > 0);
-
-  const row = (item: BoardItem) => (
-    <button
-      className={"board-lrow" + (detail?.id === item.id ? " sel" : "")}
-      key={item.id}
-      data-testid={`board-item-${item.id}`}
-      onClick={() => void openItem(item.id)}
-    >
-      <span className={dotClass(item.state)} />
-      <span className="board-lrow-id">#{item.id}</span>
-      <span className="board-lrow-title">{item.title}</span>
-      <span className="board-lrow-end">
-        {item.assignee}
-        {item.state === "blocked" && (
-          <>
-            {" · "}
-            {item.blocker
-              ? t("board.blocked_with", { blocker: item.blocker })
-              : t("board.blocked_label")}
-          </>
-        )}
-      </span>
-    </button>
-  );
-
-  return (
-    <div className="board-overlay" data-testid="board-overlay" onClick={onClose}>
-      <div className="board-overlay-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="board-overlay-head">
-          <div className="board-overlay-title">
-            <Icon name="table" size={16} />
-            <span>{t("rail.board_title")}</span>
-            <span className="board-overlay-space">{board.name}</span>
-          </div>
-          <button
-            className="artifact-icon-btn"
-            onClick={onClose}
-            aria-label={t("board.close_board")}
-            title={t("rail.close")}
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-        <div className="board-overlay-body">
-          <div className="board-list">
-            {sections.map((section) => (
-              <div key={section.labelKey}>
-                <div className="board-lsec">{t(section.labelKey)}</div>
-                {section.items.map(row)}
-              </div>
-            ))}
-            {sections.length === 0 && (
-              <div className="board-rail-quiet">{t("board.no_active_work")}</div>
-            )}
-            {finished.length > 0 && (
-              <>
-                <button
-                  className="board-finished-toggle"
-                  data-testid="overlay-finished-toggle"
-                  onClick={() => setShowFinished((v) => !v)}
-                >
-                  {showFinished
-                    ? t("board.hide_finished")
-                    : t("board.finished_show", { count: finished.length })}
-                </button>
-                {showFinished && (
-                  <div>
-                    <div className="board-lsec">{t("board.finished")}</div>
-                    {finished.map(row)}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-          {detail && (
-            <ItemDetail
-              detail={detail}
-              onTransition={move}
-              onAddNote={onComment ? addNote : undefined}
-              loadAttachment={loadAttachment}
-              onOpenWorker={onOpenWorker}
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const STATE_LABEL_KEYS: Record<string, string> = {
   open: "board.state_queued",
   in_progress: "board.state_in_progress",
@@ -287,7 +120,7 @@ function stateLabel(t: TFunction, state: string): string {
   return STATE_LABEL_KEYS[state] ? t(STATE_LABEL_KEYS[state]) : state;
 }
 
-function ItemDetail({
+export function ItemDetail({
   detail,
   onTransition,
   onAddNote,
@@ -350,6 +183,7 @@ function ItemDetail({
         </div>
       )}
       <div className="board-tl">
+        {detail.refs.filter(ref => /^https?:\/\//.test(ref)).map(ref => <p key={ref}><a href={ref} target="_blank" rel="noreferrer">{ref}</a></p>)}
         {(detail.timeline || []).map((event) => (
           <TimelineRow key={event.seq} event={event} loadAttachment={loadAttachment} />
         ))}
@@ -385,8 +219,7 @@ function NoteComposer({
   const submit = async () => {
     const body = text.trim();
     if (!body) return;
-    setText("");
-    await onAddNote(detail.id, body);
+    try { await onAddNote(detail.id, body); setText(""); } catch { /* Keep the draft; the parent displays the failure. */ }
   };
   return (
     <input
