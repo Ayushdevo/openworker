@@ -182,11 +182,6 @@ def test_ollama_models_support_openai_compatible_servers(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    manager = SessionManager(data_dir=tmp_path / "data")
-    assert manager.set_provider(
-        "ollama", {"base_url": "http://127.0.0.1:8080/v1"}
-    )["ok"]
 
     class Response:
         def __init__(self, status_code, payload):
@@ -206,6 +201,11 @@ def test_ollama_models_support_openai_compatible_servers(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    assert manager.set_provider(
+        "ollama", {"base_url": "http://127.0.0.1:8080/v1"}
+    )["ok"]
 
     assert manager._ollama_alive() is True
     assert manager._ollama_models() == [
