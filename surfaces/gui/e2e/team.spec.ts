@@ -208,6 +208,9 @@ test("approval creates the team; members live in the drawer, RECENT keeps one en
   await panel.getByTestId("team-row-nia").click();
   await expect(page.getByTestId("rail-toggle-progress")).toBeVisible();
   await expect(page.getByTestId("rail-toggle-team")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to lead" }).click();
+  await expect(page.getByTestId("session-title")).toHaveText("Build the statements page");
+  await expect(page.getByTestId("back-to-lead")).toHaveCount(0);
 });
 
 // Token counting (connectors-across-machines §5): the lead's Team panel rolls the tree

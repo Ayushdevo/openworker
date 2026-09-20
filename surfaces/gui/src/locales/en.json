@@ -2364,6 +2364,8 @@
     "action_error": "The action could not be completed. Your work has not been confirmed.",
     "send_error": "The message was not accepted.",
     "message_worker": "Message {{worker}}…",
+    "back_to_lead": "Back to lead",
+    "lead_unavailable": "The lead session is not available in this session list.",
     "linked_tasks": "Assigned tasks ({{count}})",
     "related_conversations": "Related worker conversations",
     "send": "Send",

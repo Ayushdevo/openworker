@@ -1,5 +1,17 @@
 import { expect, test } from "@playwright/test";
 
+test("a directly opened worker retains a route back to its lead after reload", async ({ page }) => {
+  await page.goto("/?scenario=team-view-5#/s/scn-team-view-5-sam");
+  await expect(page.getByTestId("session-title")).toHaveText("sam");
+  await expect(page.getByRole("button", { name: "Back to lead" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Back to lead" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to lead" }).click();
+  await expect(page.getByTestId("session-title")).toHaveText("Refund rounding · Acme");
+  await expect(page).toHaveURL(/#\/s\/scn-team-view-5$/);
+  await expect(page.getByTestId("back-to-lead")).toHaveCount(0);
+});
+
 test("team icon, task chip, worker message and all three tabs work together", async ({
   page,
 }) => {

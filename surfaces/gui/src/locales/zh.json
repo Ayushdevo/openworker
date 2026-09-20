@@ -2324,6 +2324,8 @@
     "action_error": "操作未能完成，尚未确认你的更改。",
     "send_error": "消息未被接受。",
     "message_worker": "向 {{worker}} 发送消息…",
+    "back_to_lead": "返回负责人",
+    "lead_unavailable": "此会话列表中没有可用的负责人会话。",
     "linked_tasks": "已分配的任务（{{count}}）",
     "related_conversations": "相关协作者会话",
     "send": "发送",

@@ -1233,6 +1233,12 @@ export function App() {
   // Seventeenth pass: the drawer's Team panel — this session's staff (workers whose
   // lead is the current session). The sidebar shows ONE entry per team; members live here.
   const curSession = sessions.find((s) => s.session_id === sessionId);
+  // Follow the stored team relationship, not browser history: a worker may
+  // have been opened directly, from the Inbox, or after a reload.
+  const workerLeadId = curSession?.team?.role === "worker"
+    ? curSession.team.lead_session
+    : undefined;
+  const workerLead = sessions.find((s) => s.session_id === workerLeadId);
   const teamMembers = sessions.filter(
     (s) => s.team?.role === "worker" && s.team.lead_session === sessionId,
   );
@@ -2045,6 +2051,21 @@ export function App() {
                   <Icon name="search" size={16} />
                 </button>
               </div>
+            )}
+            {workerLeadId && workerLeadId !== sessionId && (
+              <button
+                className="text-meta text-muted hover:text-ink shrink-0 px-2 py-1 disabled:opacity-50"
+                data-testid="back-to-lead"
+                onPointerDown={(e) => e.stopPropagation()}
+                disabled={!workerLead}
+                title={workerLead ? t("teamview.back_to_lead") : t("teamview.lead_unavailable")}
+                aria-label={t("teamview.back_to_lead")}
+                onClick={() => {
+                  if (workerLead) void selectSession(workerLead.session_id, workerLead.workspace, workerLead.agent);
+                }}
+              >
+                ← {t("teamview.lead")}
+              </button>
             )}
             {/* §32: no session-settings row up here anymore — the §23 rest/hover/click glance
                 machinery retired with the drawer. "What can this touch" lives permanently on
