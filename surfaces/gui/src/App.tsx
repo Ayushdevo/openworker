@@ -2310,32 +2310,6 @@ export function App() {
                 }}
               />
             )}
-            {/* A scheduled agent must never read as a dead one: while a self-wake is
-                pending and no turn is running, say so and offer the obvious action. */}
-            {activeInfo?.liveness === "sleeping" && !running && (
-              <div className="sleep-strip" data-testid="sleep-strip">
-                <span className="sleep-dot" />
-                <span className="sleep-text">
-                  {t("app.sleep.label")}
-                  {activeInfo.sleeping_until
-                    ? t("app.sleep.until", {
-                        time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-                      })
-                    : ""}
-                  {activeInfo.team?.role === "lead"
-                    ? t("app.sleep.team_clause")
-                    : t("app.sleep.trigger_clause")}{" "}
-                  {t("app.sleep.talk_anytime")}
-                </span>
-                <button
-                  className="btn sm"
-                  data-testid="sleep-status-btn"
-                  onClick={() => send(t("app.sleep.status_prompt"))}
-                >
-                  {t("app.sleep.ask_status")}
-                </button>
-              </div>
-            )}
             {!connected && !booting && !currentRowOffline && !(isCloudMode() && !machine) && (
               <div className="reconnecting-strip" data-testid="session-reconnecting" role="status">
                 {machine ? t("misc.app.machine_reconnecting") : t("misc.app.reconnecting")}
@@ -2347,6 +2321,25 @@ export function App() {
               </div>
             )}
             <Composer
+              statusSlot={activeInfo?.liveness === "sleeping" && !running ? (
+                <div className="sleep-strip" data-testid="sleep-strip">
+                  <span className="sleep-dot" />
+                  <span className="sleep-text">
+                    {t("app.sleep.label")}
+                    {activeInfo.sleeping_until
+                      ? t("app.sleep.until", {
+                          time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+                        }) : ""}
+                    {activeInfo.team?.role === "lead"
+                      ? t("app.sleep.team_clause") : t("app.sleep.trigger_clause")}{" "}
+                    {t("app.sleep.talk_anytime")}
+                  </span>
+                  <button className="btn sm" data-testid="sleep-status-btn"
+                    onClick={() => send(t("app.sleep.status_prompt"))}>
+                    {t("app.sleep.ask_status")}
+                  </button>
+                </div>
+              ) : undefined}
               teamSlot={curSession?.team?.role === "lead" && teamSummary?.lead_session === sessionId ? <TeamQuickLook key={sessionId} summary={teamSummary} onOpen={openTeamView} machine={curSession?.machine_name} /> : undefined}
               mode={mode}
               // §11.6: a worker's approvals follow its lead — the picker is read-only for it.

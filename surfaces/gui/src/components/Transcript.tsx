@@ -389,13 +389,13 @@ function TurnGroup({
   return (
     <details className="stepgroup" open={open}>
       <summary
-        className="stepgroup-head flex items-center gap-2 py-0.5 cursor-pointer select-none text-ui text-faint hover:text-muted"
+        className="stepgroup-head transcript-disclosure cursor-pointer select-none text-ui text-faint hover:text-muted"
         onClick={(e) => {
           e.preventDefault(); // drive open/closed from state, not the native toggle
           setUserToggle(!open);
         }}
       >
-        <span className={"chev inline-block transition-transform" + (open ? " rotate-90" : "")}>›</span>
+        <Icon name="chevronDown" size={12} />
         <span>
           <span>{running ? t("transcript.turn.running", { label: stepsLabel }) : stepsLabel}</span>
           {declined > 0 && (

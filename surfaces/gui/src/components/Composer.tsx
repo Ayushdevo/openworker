@@ -125,6 +125,7 @@ interface Props {
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
+  statusSlot?: ReactNode;
   teamSlot?: ReactNode;
   // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
   onOpenMemory?: () => void;
@@ -552,6 +553,7 @@ export function Composer(props: Props) {
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
+      {props.statusSlot && <div className="max-w-3xl mx-auto mb-3">{props.statusSlot}</div>}
       {props.approvalSlot}
 
       {dictationError && (

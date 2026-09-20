@@ -53,6 +53,25 @@ function nounFor(tool?: string): Noun {
   return "action";
 }
 
+// Older/current servers include an argument preview in the parked prompt body.
+// For shell calls the title + command block already show those same two fields.
+// Remove only that exact generated line, retaining distinct policy explanations.
+function distinctWorkerReason(call?: WorkerCall | null): string {
+  const reason = call?.reason || "";
+  const args = call?.arguments || {};
+  const shorten = (text: string, limit: number) => {
+    const chars = Array.from(text);
+    return chars.length > limit ? chars.slice(0, limit - 1).join("") + "…" : text;
+  };
+  const summary = call?.tool === "run_shell" && typeof args.command === "string"
+    && Object.keys(args).every(k => k === "command" || k === "description")
+    ? shorten(Object.entries(args).map(([key, value]) =>
+      `${key}: ${shorten(String(value).trim().replace(/\s+/g, " "), 80)}`,
+    ).join(" · "), 240) : "";
+  return reason.split("\n").filter(line => line.trim() !== "requires approval"
+    && (!summary || line.trim() !== summary)).join("\n").trim();
+}
+
 export function WorkerDecisionCard({
   decision,
   workerCall,
@@ -80,6 +99,7 @@ export function WorkerDecisionCard({
   const args = workerCall?.arguments && typeof workerCall.arguments === "object" ? workerCall.arguments : {};
   const preview =
     typeof args.command === "string" ? args.command : typeof args.content === "string" ? args.content : "";
+  const workerReason = distinctWorkerReason(workerCall);
   return (
     <div
       className={bare ? "workerdec bare" : "approval workerdec" + (compact ? " approval-dock" : "")}
@@ -107,8 +127,8 @@ export function WorkerDecisionCard({
         <div className="workerdec-call" data-testid="workerdec-call">
           <TitleText line={humanizeApprovalTitle(workerCall.tool, args)} />
           {preview && <PreviewBlock text={preview} />}
-          {workerCall.reason && workerCall.reason !== "requires approval" && (
-            <div className="approval-reason">{workerCall.reason}</div>
+          {workerReason && (
+            <div className="approval-reason">{workerReason}</div>
           )}
         </div>
       ) : (

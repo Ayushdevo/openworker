@@ -9,11 +9,33 @@ import { inboxItemBuilders } from "../gallery/inboxItems";
 import { STATES, statePayload } from "../gallery/states";
 import { ApprovalCard } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
+import { WorkerDecisionCard } from "./WorkerDecisionCard";
 
 const state = (id: string) => STATES["worker-decision"].find((s) => s.id === id)!;
 
 describe("WorkerDecisionCard", () => {
   afterEach(cleanup);
+
+  it.each(["", "This requires access to the project directory.\n"])("does not repeat generated command summaries, retaining policy text (%s)", policy => {
+    const command = "cd /workspace/acme/billing-service && npm run build && npm run test -- --run";
+    render(<WorkerDecisionCard decision={{ worker: "Maya", callId: "call", decision: "allow", note: "Verify the build." }}
+      workerCall={{ tool: "run_shell", arguments: { command, description: "Check the build" },
+        reason: `${policy}command: ${command} · description: Check the build` }}
+      onFollow={vi.fn()} onOverride={vi.fn()} />);
+    const card = screen.getByTestId("workerdec-call");
+    expect(card.querySelectorAll(".approval-reason")).toHaveLength(policy ? 1 : 0);
+    expect(card.textContent?.split(command)).toHaveLength(2);
+    if (policy) expect(card.textContent).toContain(policy.trim());
+  });
+
+  it("removes a truncated generated summary for a long command", () => {
+    const command = "npm run check " + "--sample-long-option ".repeat(20);
+    const summary = command.trim().slice(0, 79) + "…";
+    render(<WorkerDecisionCard decision={{ worker: "Maya", callId: "call", decision: "deny", note: "Use the scoped test." }}
+      workerCall={{ tool: "run_shell", arguments: { command, description: "Check" }, reason: `command: ${summary} · description: Check` }}
+      onFollow={vi.fn()} onOverride={vi.fn()} />);
+    expect(screen.getByTestId("workerdec-call").querySelector(".approval-reason")).toBeNull();
+  });
 
   it("shows the worker's command and the lead's reason, never the call id", () => {
     render(<ApprovalCard item={approvalItemFromPayload(statePayload("worker-decision", "lead-denies-command"))} onApprove={vi.fn()} />);

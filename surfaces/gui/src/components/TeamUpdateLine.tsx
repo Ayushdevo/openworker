@@ -108,7 +108,7 @@ export function TeamUpdateLine({
       open={defaultOpen || undefined}
       data-testid="team-update"
     >
-      <summary className="team-update-head">
+      <summary className="team-update-head transcript-disclosure">
         <Icon name="chevronDown" size={12} />
         <span>
           {rows.length
@@ -185,12 +185,12 @@ export function TeamCreatedLine({
   const { t } = useTranslation();
   return (
     <details className="team-update" data-testid="team-created">
-      <summary className="team-update-head">
+      <summary className="team-update-head transcript-disclosure">
         <Icon name="chevronDown" size={12} />
-        {t("teamview.created", {
+        <span>{t("teamview.created", {
           count: workers.length,
           roles: new Set(workers.map((w) => w.persona)).size,
-        })}
+        })}</span>
       </summary>
       <div className="team-update-body">
         {workers.map((w) => (

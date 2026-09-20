@@ -1546,6 +1546,12 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
    (Transcript.tsx); only the <summary> disclosure-marker reset stays in CSS. ---- */
 .stepgroup-head { list-style: none; }
 .stepgroup-head::-webkit-details-marker { display: none; }
+.transcript-disclosure {
+  display: flex; align-items: center; gap: 8px; padding: 2px 0;
+  min-width: 0; line-height: 1.5; list-style: none;
+}
+.transcript-disclosure > svg { flex: 0 0 12px; transform: rotate(-90deg); }
+details[open] > .transcript-disclosure > svg { transform: rotate(0); }
 /* §33 turn group: running-step spinner (small sibling of .waiting-spinner) */
 .spinner {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%;
@@ -2151,13 +2157,13 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 
 /* Sleeping strip — a scheduled agent never reads as a dead one. */
 .sleep-strip {
-  max-width: 760px; margin: 0 auto 8px; display: flex; align-items: center; gap: 9px;
+  width: 100%; min-width: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
   padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--panel); font-size: var(--fs-ui); color: var(--muted);
 }
 .sleep-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn-ink); opacity: 0.7; flex-shrink: 0; animation: sleep-pulse 2.4s ease-in-out infinite; }
 @keyframes sleep-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
-.sleep-text { flex: 1; }
+.sleep-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .sleep-strip .btn.sm { padding: 4px 10px; font-size: var(--fs-meta); }
 
 /* UX-038: viewer header — breadcrumb-as-back, ✕ close, one labeled ⋯ menu. */
@@ -2203,10 +2209,8 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .task-chip { display:inline-flex; align-items:center; gap:5px; padding:0 5px; border:0; border-radius:5px; background:var(--accent-soft, #e9f0fd); color:var(--accent, #2563eb); font:inherit; font-size:.92em; vertical-align:baseline; max-width:100%; cursor:pointer; }
 .task-chip > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .team-update { font-size:var(--fs-ui); color:var(--faint); min-width:0; }
-.team-update-head { display:flex; align-items:baseline; gap:6px; cursor:pointer; list-style:none; }
+.team-update-head { cursor:pointer; }
 .team-update-head::-webkit-details-marker { display:none; }
-.team-update-head > svg { flex-shrink:0; transform:rotate(-90deg); }
-.team-update[open] > .team-update-head > svg { transform:rotate(0); }
 .team-update-head time { white-space:nowrap; font-size:var(--fs-label); }
 .team-update-head { min-width:0; white-space:nowrap; }
 .team-update-head > span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
