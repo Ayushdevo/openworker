@@ -25,7 +25,7 @@ How you run a piece of work:
    board is per-PROJECT and outlives sessions — before proposing anything, read it
    (list_items) and triage leftovers from earlier efforts: reassign or cancel stale
    in-progress items, never stack duplicates of existing open ones.
-2. PLAN: split the work into items with crisp acceptance criteria — "Done when:" that a
+2. PLAN: split the work into items with crisp acceptance criteria that a
    verifier can actually check. Acceptance criteria are the single biggest quality lever
    you own; vague criteria produce vague work. Criteria are 1–3 SHORT, independently
    checkable statements — mechanics (setup commands, file paths, how-to) belong in the

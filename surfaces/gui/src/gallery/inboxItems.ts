@@ -39,7 +39,7 @@ export const inboxItemBuilders: Partial<Record<string, (s: CardState<any>) => In
       "plan",
       "Approve the proposed work items?",
       (p.items || []).map((i: any) => `- ${i.title}`).join("\n"),
-      { gate: "items", items: p.items || [], note: p.note || "" },
+      { gate: "items", ...p },
     ),
   approval: ({ payload: p, context }) =>
     parked("approval", `Run \`${p.name}\`?`, p.reason || "", {

@@ -36,7 +36,7 @@ test("the same state renders as the parked Inbox item and resolves with the full
 test("the rail switches cards and lands on the card's first state", async ({ page }) => {
   await page.goto("/#/gallery");
   await page.getByTestId("gallery-card-work-items").click();
-  await expect(page).toHaveURL(/#\/gallery\/work-items\/three-items$/);
+  await expect(page).toHaveURL(/#\/gallery\/work-items\/launch-plan$/);
   await expect(page.getByTestId("itemsreq-card")).toBeVisible();
 });
 

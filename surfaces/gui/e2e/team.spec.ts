@@ -13,6 +13,22 @@ async function proposeTeam(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("teamreq-card")).toBeVisible();
 }
 
+test("a rich proposal keeps its actions and composer reachable in a short window", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await page.goto("/");
+  await page.getByPlaceholder(/Ask the coworker/).fill("propose security split");
+  await page.getByRole("button", { name: "Send" }).click();
+  const card = page.getByTestId("itemsreq-card");
+  await card.locator("summary").first().click();
+  const approve = page.getByTestId("itemsreq-approve");
+  await expect(approve).toBeInViewport();
+  await expect(page.getByPlaceholder(/Reply to adjust the proposal/)).toBeInViewport();
+  const bounds = await card.boundingBox();
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  await approve.click();
+  await expect(card).toHaveCount(0);
+});
+
 test("the decomposition gate shows items with criteria; approval lands them on the board", async ({
   page,
 }) => {
@@ -22,17 +38,11 @@ test("the decomposition gate shows items with criteria; approval lands them on t
   const card = page.getByTestId("itemsreq-card");
   await expect(card).toBeVisible();
   await expect(card).toContainText("Proposed work items — 4");
-  await expect(card).toContainText("Done when:");
-  // 3 visible + expander with the true remainder
-  await expect(card.getByText("Verification pass")).toHaveCount(0);
-  await card.getByRole("button", { name: /1 more item/ }).click();
+  await expect(card).toContainText("Acceptance criteria");
   await expect(card.getByText("Verification pass")).toBeVisible();
 
   // essay-length criteria clamp behind a per-item expander (owner-hit 2026-08-16)
-  const acToggle = page.getByTestId("itemsreq-ac-toggle-0");
-  await expect(acToggle).toHaveText("Show full criteria");
-  await acToggle.click();
-  await expect(acToggle).toHaveText("Show less");
+  await expect(card).toContainText("inclusive boundaries verified end to end");
   // the short-criteria items get no toggle
   await expect(page.getByTestId("itemsreq-ac-toggle-1")).toHaveCount(0);
 
@@ -83,7 +93,9 @@ test("declining the split returns feedback to the lead", async ({ page }) => {
   await page.getByPlaceholder(/Ask the coworker/).fill("propose the split");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByTestId("itemsreq-card").waitFor();
-  await page.getByRole("button", { name: "Not now" }).click();
+  await page.getByRole("button", { name: "Request changes" }).click();
+  await page.getByLabel("What should change?").fill("Revise the task split");
+  await page.getByRole("button", { name: "Send feedback" }).click();
   await expect(page.getByText(/reworking the split/)).toBeVisible();
 });
 
@@ -104,11 +116,8 @@ test("the staffing gate shows named workers, the chat toggle, and one-line butto
   await expect(card).not.toContainText("Approving grants the lead");
   const approve = card.getByTestId("teamreq-approve");
   await expect(approve).toHaveText("Create team");
-  await expect(approve).toHaveAttribute(
-    "title",
-    /Approving grants the lead create, assign & steer — this team only, revocable\./,
-  );
-  await expect(card.getByRole("button", { name: "Not now" })).toBeVisible();
+  await expect(card).toContainText("does not start these tasks");
+  await expect(card.getByRole("button", { name: "Request changes" })).toBeVisible();
 });
 
 test("enabling chat at the gate adds the # team chat row; posting works with mentions", async ({
@@ -166,7 +175,9 @@ test("with chat declined at the gate, no chat row renders", async ({ page }) => 
 
 test("declining the roster returns the turn to the lead", async ({ page }) => {
   await proposeTeam(page);
-  await page.getByRole("button", { name: "Not now" }).click();
+  await page.getByRole("button", { name: "Request changes" }).click();
+  await page.getByLabel("What should change?").fill("Revise the roster");
+  await page.getByRole("button", { name: "Send feedback" }).click();
   await expect(page.getByText(/tell me how to change the roster/)).toBeVisible();
   await expect(page.getByTestId("teamreq-card")).toHaveCount(0);
 });
@@ -255,10 +266,7 @@ test("the staffing card carries connector checkboxes and states that approvals f
   await card.getByTestId("teamreq-connector-1-linear").check();
   await expect(card.getByTestId("teamreq-beyond-1")).toContainText("Beyond this worker's usual set");
   await expect(card.getByTestId("teamreq-connector-1-linear")).toBeChecked();
-  await expect(card.getByTestId("teamreq-approve")).toHaveAttribute(
-    "title",
-    /Workers get only the connectors you tick\./,
-  );
+  await expect(card.getByTestId("proposal-connector-summary")).toContainText("GitHub");
   // the approvals line reads the composer's mode…
   await expect(card.getByTestId("teamreq-approvals")).toContainText("Approvals follow the lead's mode: Ask for approval");
   // …and follows it live when the mode changes in the composer

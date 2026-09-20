@@ -1,5 +1,6 @@
 // `team_proposed` payloads (and the parked `gate: "team"` Inbox item's data — same fields).
 import type { CardState } from "../types";
+import { launchTeam } from "./proposal-examples";
 
 const MODELS = [
   { id: "anthropic:claude-opus-4-8", label: "Claude Opus 4.8" },
@@ -57,6 +58,7 @@ function roster(builders: number, testers: number, reviewers: number, docs: numb
 const BIG_OFFER = { "swe-worker": ["github"], "test-worker": ["github"], "review-worker": ["github"], "docs-worker": [] };
 
 export const teamRequestStates: CardState[] = [
+  { id: "launch-team", title: "Launch team · ten workers", payload: launchTeam },
   {
     id: "lead-suggested-github",
     title: "Lead suggested GitHub",

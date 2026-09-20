@@ -2099,6 +2099,48 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .team-dot.review { background: var(--warn-ink); }
 
 /* Decomposition gate (proposed work items) */
+.proposal-card { padding: 22px; background: var(--panel); color: var(--ink); border-radius: 16px; overflow-wrap: anywhere; }
+.composer-wrap > .proposal-card { display: flex; flex-direction: column; max-height: min(65dvh, calc(100dvh - 220px)); }
+.composer-wrap > .proposal-card > .proposal-content { min-height: 0; overflow-y: auto; }
+.composer-wrap > .proposal-card > .proposal-actions { flex: none; }
+.proposal-heading { display: flex; gap: 12px; align-items: center; }
+.proposal-heading h3 { margin: 2px 0 0; font-size: var(--fs-heading); font-weight: 500; line-height: 1.3; }
+.proposal-mark { width: 38px; height: 38px; display: grid; place-items: center; background: var(--paper); border-radius: 10px; flex: none; }
+.proposal-label { display: block; font-size: var(--fs-meta); color: var(--muted); }
+.proposal-summary { margin: 16px 0 12px; color: var(--muted); font-size: var(--fs-ui); }
+.proposal-meta { display: flex; flex-wrap: wrap; gap: 6px 15px; color: var(--muted); font-size: var(--fs-meta); margin-bottom: 18px; }
+.proposal-group { border-bottom: 1px solid var(--line); }
+.proposal-group>summary { display: flex; align-items: center; gap: 10px; padding: 13px 0; list-style: none; cursor: pointer; }
+.proposal-group>summary::-webkit-details-marker { display: none; }
+.proposal-group>summary>svg { flex: none; color: var(--muted); }
+.proposal-group[open]>summary>svg { transform: rotate(90deg); }
+.proposal-group>summary>.proposal-muted { flex: none; }
+.proposal-group-title { min-width: 0; flex: 1; font-size: var(--fs-ui); font-weight: 500; }
+.proposal-group-title small { display: block; color: var(--muted); font-size: var(--fs-meta); font-weight: 400; margin-top: 3px; }
+.proposal-group-content { padding: 0 0 12px 24px; }
+.proposal-task { padding: 12px 0; border-top: 1px solid var(--line); }
+.proposal-task-title { font-weight: 500; margin-bottom: 8px; }
+.proposal-card p { margin-top: 4px; margin-bottom: 8px; }
+.proposal-criteria { white-space: pre-wrap; font-size: var(--fs-ui); }
+.proposal-muted { color: var(--muted); font-size: var(--fs-meta); }
+.proposal-final { margin-top: 16px; }
+.proposal-boundaries { display: grid; gap: 14px; margin-top: 16px; font-size: var(--fs-meta); }
+.proposal-boundaries ul { padding-left: 18px; margin: 5px 0 8px; }
+.proposal-permission-note { margin-top: 12px; }
+.proposal-access { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 14px; margin: 14px 0; font-size: var(--fs-meta); }
+.proposal-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
+.proposal-actions .btn { display: inline-flex; gap: 8px; align-items: center; }
+.proposal-change { border-color: transparent; color: var(--muted); background: transparent; }
+.proposal-feedback { margin-top: 16px; }
+.proposal-feedback textarea { display: block; width: 100%; resize: vertical; margin: 6px 0 10px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
+.proposal-name { display: block; font-size: var(--fs-meta); color: var(--muted); margin: 8px 0; }
+.proposal-name input { display: block; width: 100%; max-width: 240px; padding: 6px 9px; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; font: inherit; }
+.proposal-responsibilities { display: grid; gap: 3px; font-size: var(--fs-meta); margin-bottom: 8px; }
+.proposal-card .teamreq-head { margin: 12px 0; color: var(--muted); }
+.proposal-card .teamreq-title { font-size: var(--fs-meta); font-weight: 400; color: var(--muted); }
+.proposal-card .teamreq-diamond { display: none; }
+.proposal-card .teamreq-roster { max-height: 400px; }
+@media(max-width: 520px) { .proposal-card { padding: 16px; } .proposal-group-content { padding-left: 8px; } }
 .itemsreq-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .itemsreq-title { font-weight: 600; font-size: var(--fs-ui); color: var(--ink); }
 .itemsreq-note { font-size: var(--fs-meta); color: var(--muted); margin-bottom: 4px; }

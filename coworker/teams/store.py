@@ -168,7 +168,7 @@ class TeamStore:
             );
             """)
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(team_items)")}
-        for column in ("status", "status_ts"):
+        for column in ("status", "status_ts", "proposal"):
             if column not in columns:
                 self._conn.execute(f"ALTER TABLE team_items ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
@@ -232,6 +232,7 @@ class TeamStore:
         recipient: Optional[str],
         payload: dict[str, Any],
         taint: bool,
+        commit: bool = True,
     ) -> dict[str, Any]:
         prev = self._head_hash(space)
         record = {
@@ -282,7 +283,8 @@ class TeamStore:
             """,
             (space, record["hash"], seq, record["hash"], seq),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return {**record, "seq": seq, "payload": payload}
 
     def events(
@@ -485,6 +487,45 @@ class TeamStore:
             self._conn.commit()
 
     # ------------------------------------------------------------------ board verbs
+
+    def create_proposal(self, space: str, actor: Actor, proposal: dict) -> dict:
+        """Atomically materialize an accepted plan, its intent and dependency links."""
+        from .proposals import validate_work_proposal
+        proposal = validate_work_proposal(proposal)
+        self._require(actor, {Role.USER, Role.LEAD}, "create_proposal")
+        # Journal failures must not leave committed board items followed by an error
+        # that encourages the lead to retry the whole proposal.
+        if self.journal is not None:
+            for case in {i.get("case") for i in proposal["items"]} - {None, ""}:
+                self.journal.ensure_case(case, actor.id)
+        common = {k: v for k, v in proposal.items() if k != "items"}
+        with self._lock:
+            first = self._next_item_id(space)
+            ids = {item["key"]: first + i for i, item in enumerate(proposal["items"])}
+            def append(kind, item_id, payload, case=None):
+                return self._append_locked(space, kind, actor, item_id=item_id,
+                    case_id=case, recipient=None, payload=payload, taint=False, commit=False)
+            try:
+                for item in proposal["items"]:
+                    metadata = {**common, "key": item["key"], "activity": item["activity"],
+                        "workstream": item["workstream"], "item_ids": ids,
+                        "verifies": [ids[k] for k in item["verifies"]]}
+                    append(ITEM_CREATED, ids[item["key"]], {**item, "proposal": metadata}, item.get("case"))
+                for item in proposal["items"]:
+                    for prerequisite in item["depends_on"]:
+                        append(ITEM_LINKED, ids[prerequisite], {"src": ids[prerequisite],
+                            "kind": "blocks", "dst": ids[item["key"]]})
+                # Reserving the explicit lead-owned acceptance item does not execute it.
+                final = proposal["final_acceptance"]
+                if final["owner"] == "lead":
+                    append(ITEM_ASSIGNED, ids[final["item_key"]], {"assignee": actor.id, "previous": ""})
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return {"approved": True, "items": [{"id": ids[i["key"]], "key": i["key"],
+            "title": i["title"]} for i in proposal["items"]],
+            "note": "Items and dependency links created. Staff and assign to start work; declared external actions are not permission grants."}
 
     def create_item(
         self,
@@ -979,6 +1020,9 @@ class TeamStore:
                     seq,
                 ),
             )
+            if payload.get("proposal"):
+                self._conn.execute("UPDATE team_items SET proposal = ? WHERE space = ? AND id = ?",
+                    (_canonical(payload["proposal"]), space, item_id))
             if payload.get("parent") is not None:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO team_links (space, src, kind, dst)"
@@ -1323,6 +1367,7 @@ def _hash(record: dict[str, Any], *, fields: tuple[str, ...] = _HASHED_FIELDS) -
 
 def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
+    item["proposal"] = json.loads(item.get("proposal") or "null")
     try:
         item["refs"] = json.loads(item.get("refs") or "[]")
     except json.JSONDecodeError:

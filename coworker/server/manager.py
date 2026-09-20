@@ -1554,6 +1554,12 @@ class SessionManager:
         the item takes the queue's default like every other background prompt."""
 
         async def approve(args, tool_call_id=None):
+            from ..teams.proposals import validate_team_proposal
+            try:
+                args = validate_team_proposal(args)
+                self.team_planned_items(session_id, args["members"])
+            except (ValueError, TeamsBoardError) as error:
+                return {"approved": False, "error": str(error)}
             members = [dict(m) for m in (args.get("members") or []) if isinstance(m, dict)]
             # The lead's connector suggestions (worker-connector-grants spec §2-4): inside a
             # worker's default set on its own judgment; outside it ONLY on the human's words,
@@ -1597,6 +1603,7 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
                 data={
+                    "title": args["title"], "summary": args["summary"], "groups": args["groups"],
                     "gate": "team",
                     "enable_chat": bool(args.get("enable_chat", False)),
                     "note": str(args.get("note") or ""),
@@ -1622,24 +1629,36 @@ class SessionManager:
                 merged.append(
                     {
                         **{k: v for k, v in m.items() if k != "connectors"},
+                        "name": str(d.get("name", m.get("name", ""))).strip(),
                         "connectors": list(d.get("connectors") or []),
                         "model_by_human": str(d.get("model") or "").strip(),
                     }
                 )
             resolved = self.inbox.get(item.id)
+            try:
+                self.team_planned_items(session_id, merged)
+            except (ValueError, TeamsBoardError) as error:
+                return {"approved": False, "error": str(error)}
             return self.create_team(
                 session_id, merged, enable_chat=enable_chat,
                 approved_by=str(getattr(resolved, "resolved_by", "") or ""),
             )
 
+        # The engine checks board references before broadcasting the live card.
+        approve.validate = lambda args: self.team_planned_items(session_id, args["members"])
         return approve
 
     def inbox_items_approver(self, session_id: str, agent: str, *, visibility=None):
         """The decomposition gate for any turn (see inbox_team_approver)."""
 
         async def approve(args, tool_call_id=None):
+            from ..teams.proposals import validate_work_proposal
+            try:
+                args = validate_work_proposal(args)
+            except ValueError as error:
+                return {"approved": False, "error": str(error)}
             items = [i for i in (args.get("items") or []) if isinstance(i, dict)]
-            body = "\n".join(f"- {i.get('title', '?')} — Done when: {i.get('criteria', '?')}" for i in items)
+            body = "\n".join(f"- {i.get('title', '?')} — Acceptance criteria: {i.get('criteria', '?')}" for i in items)
             item = self.inbox.add_plan(
                 session_id,
                 "Approve the proposed work items?",
@@ -1647,7 +1666,7 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
                 # Same fields as the inline `items_proposed` event, note included.
-                data={"gate": "items", "items": items, "note": str(args.get("note") or "")},
+                data={"gate": "items", **args},
                 **({"visibility": visibility()} if visibility else {}),
             )
             if item.state == "pending":
@@ -1657,7 +1676,7 @@ class SessionManager:
             resp = _parse_inbox_json(await self.inbox.wait(item.id))
             if not resp.get("approved"):
                 return {"approved": False, "feedback": resp.get("feedback") or "the user declined the split"}
-            return self.board_create_items(session_id, items)
+            return self.board_create_items(session_id, items, proposal=args)
 
         return approve
 
@@ -2507,7 +2526,7 @@ class SessionManager:
             return {"error": str(error)}
 
     def board_create_items(
-        self, session_id: str, items: list[dict[str, Any]]
+        self, session_id: str, items: list[dict[str, Any]], *, proposal: dict | None = None
     ) -> dict[str, Any]:
         """The decomposition gate's approved action: create the proposed items as
         the LEAD (its identity is the creator; the user's approval is the gate that
@@ -2522,6 +2541,8 @@ class SessionManager:
             persona=record.agent,
             session_id=session_id,
         )
+        if proposal is not None:
+            return self.team_store.create_proposal(space, actor, proposal)
         for entry in items:
             if not str((entry or {}).get("title", "")).strip() or not str(
                 (entry or {}).get("criteria", "")
@@ -3310,8 +3331,10 @@ class SessionManager:
                     continue
                 lines.append(
                     f"You've been assigned work item {title}.\n"
-                    f"  Done when: {item['criteria']}"
+                    f"  Acceptance criteria: {item['criteria']}"
                     + (f"\n  Details: {item['description']}" if item["description"] else "")
+                    + ("\n  Approved proposal context (intent, not access grants): "
+                       + json.dumps(item["proposal"], ensure_ascii=False) if item.get("proposal") else "")
                 )
                 rows.append({**row, "kind": "assigned", "assignee": assignee})
             elif event["kind"] == "item_transitioned":
@@ -4219,6 +4242,32 @@ class SessionManager:
         record = self.session_store.load(session_id)
         return str(getattr(record, "model", "") or self.model)
 
+    def team_planned_items(self, session_id: str, members: list) -> list[dict]:
+        """Resolve declared responsibilities only within the lead's actual board."""
+        ids = list(dict.fromkeys(i for m in members for i in m.get("item_ids", [])))
+        if not ids:
+            return []
+        record = self.session_store.load(session_id)
+        if record is None or not record.workspace:
+            raise ValueError("planned responsibilities need a session workspace")
+        space = self._space_for(record, record.workspace)
+        actor = TeamActor(id=f"{record.agent}:{session_id[:8]}", role=TeamRole.LEAD,
+                          persona=record.agent, session_id=session_id)
+        result = []
+        for item_id in ids:
+            item = self.team_store.get_item(space, item_id, actor=actor)
+            if item["state"] == "canceled":
+                raise ValueError(f"item {item_id} is canceled; revise planned responsibilities")
+            row = {"id": item_id, "title": item["title"]}
+            context = item.get("proposal")
+            if context:
+                final_id = context["item_ids"][context["final_acceptance"]["item_key"]]
+                final = self.team_store.get_item(space, final_id, actor=actor)
+                row["final_acceptance"] = {"id": final_id, "title": final["title"],
+                    "owner": "lead" if final["assignee"] == actor.id else "assigned_worker"}
+            result.append(row)
+        return result
+
     def team_card_extras(self, session_id: str, members: list) -> dict[str, Any]:
         """Everything the staffing card needs beyond the lead's raw proposal, computed on
         THIS machine (where the workers will run): the connector offer, the other connected
@@ -4246,6 +4295,7 @@ class SessionManager:
         runnable = [m for m in self._curated_models() if self.model_selectable(m)]
         return {
             "members": decorated,
+            "planned_items": self.team_planned_items(session_id, members),
             "offer": {pid: self.connector_offer(pid) for pid in dict.fromkeys(personas)},
             "other_connected": self.other_connected(),
             "lead_mode": self.session_mode_value(session_id),

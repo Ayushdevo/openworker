@@ -217,11 +217,17 @@ export type Item =
   | {
       // The staffing gate (agent teams): a lead proposes its worker roster.
       kind: "teamreq";
+      title?: string;
+      summary?: string;
+      groups?: import("./proposals").ProposalGroup[];
+      planned_items?: { id: number; title: string; final_acceptance?: { id: number; title: string; owner: "lead" | "assigned_worker" } }[];
       toolCallId?: string;
       // connectors = the LEAD'S SUGGESTION for this worker (arrives ticked on the card);
       // connector_reasons = why, per suggested connector.
       members: {
         persona: string;
+        group?: string;
+        item_ids?: number[];
         name?: string;
         model?: string;
         reason?: string;
@@ -262,8 +268,15 @@ export type Item =
   | {
       // The decomposition gate: a lead proposes work items; approval creates them.
       kind: "itemsreq";
+      title?: string;
+      summary?: string;
+      targets?: string[];
+      external_actions?: import("./proposals").ExternalActions;
+      activities?: import("./proposals").ProposalGroup[];
+      workstreams?: import("./proposals").ProposalGroup[];
+      final_acceptance?: { item_key: string; owner: "lead" | "assigned_worker" };
       toolCallId?: string;
-      items: { title: string; criteria: string; description?: string }[];
+      items: import("./proposals").ProposalTask[];
       note?: string;
       resolved?: "approved" | "rejected";
     }

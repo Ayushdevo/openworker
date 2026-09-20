@@ -26,6 +26,8 @@ export type IconName =
   | "pencil"
   | "branch"
   | "arrowLeft"
+  | "arrowRight"
+  | "team"
   | "copy"
   | "refresh"
   | "panelClose"
@@ -114,6 +116,10 @@ export function Icon({
           <path d="M15 4.5v15" />
         </svg>
       );
+    case "team":
+      return <svg {...s}><circle cx="9" cy="7" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 13a5 5 0 0 1 3 5v3" /></svg>;
+    case "arrowRight":
+      return <svg {...s}><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
     case "user":
       return (
         <svg {...s}>

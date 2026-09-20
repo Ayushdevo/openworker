@@ -755,8 +755,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("turn_done");
           return;
         }
-        if (/propose the split/i.test(msg.text)) {
-          sendState("items_proposed", "work-items", "statements-split");
+        if (/propose the split|propose security split/i.test(msg.text)) {
+          sendState("items_proposed", "work-items", /security/.test(msg.text) ? "security-plan" : "statements-split");
           return; // suspended on the items decision
         }
         // Agent teams (OPE-97): the staffing gate — the lead proposes a roster and

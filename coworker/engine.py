@@ -1912,19 +1912,17 @@ class TurnEngine:
         """The decomposition gate: emit the proposed items, await the user's decision.
         Approval creates them on the board (server-side, inside the approver) and the
         result carries their ids; rejection returns feedback for a revised split."""
+        from .teams.proposals import validate_work_proposal
         args = tool_call.arguments or {}
-        items = args.get("items") or []
-        valid = [
-            i
-            for i in items
-            if isinstance(i, dict)
-            and str(i.get("title", "")).strip()
-            and str(i.get("criteria", "")).strip()
-        ]
-        if not valid or len(valid) != len(items):
+        problem = None
+        try:
+            args = validate_work_proposal(args)
+        except ValueError as error:
+            problem = str(error)
+        if problem:
             result: dict[str, Any] = {
                 "approved": False,
-                "error": "every proposed item needs a title and acceptance criteria",
+                "error": problem,
             }
         elif self.items_approver is None:
             result = {
@@ -1934,7 +1932,7 @@ class TurnEngine:
         else:
             yield Event(
                 EventType.ITEMS_PROPOSED,
-                {"items": valid, "note": str(args.get("note", "")), "tool_call_id": tool_call.id},
+                {**args, "tool_call_id": tool_call.id},
             )
             self._audit(tool_call, stage="items_proposed")
             result = await self._wait_tool(tool_call,
@@ -2007,12 +2005,22 @@ class TurnEngine:
         decision. Approval PRE-SPAWNS the worker sessions (server-side, inside the
         approver) and the result carries the roster with actor ids so the lead can
         assign; rejection returns the user's feedback for a revised proposal."""
+        from .teams.proposals import validate_team_proposal
+        from .teams.model import BoardError
         args = tool_call.arguments or {}
-        members = args.get("members") or []
-        if not isinstance(members, list) or not members:
+        problem = None
+        try:
+            args = validate_team_proposal(args)
+            validator = getattr(self.team_approver, "validate", None)
+            if validator:
+                validator(args)
+        except (ValueError, BoardError) as error:
+            problem = str(error)
+        members = args.get("members", []) if isinstance(args, dict) else []
+        if problem:
             result: dict[str, Any] = {
                 "approved": False,
-                "error": "propose at least one member ({persona, model?, reason?})",
+                "error": problem,
             }
         elif self.team_approver is None:
             result = {
@@ -2023,10 +2031,10 @@ class TurnEngine:
             yield Event(
                 EventType.TEAM_PROPOSED,
                 {
+                    **args,
                     "tool_call_id": tool_call.id,
                     "members": members,
                     "enable_chat": bool(args.get("enable_chat", False)),
-                    "note": str(args.get("note", "")),
                 },
             )
             self._audit(tool_call, stage="team_proposed")

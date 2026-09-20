@@ -5,12 +5,13 @@ import pytest
 
 from test_engine import ScriptedProvider, _text_turn, _tool_turn
 from test_team_live_gaps import manager
+from proposal_fixtures import work_proposal, team_proposal
 
 
 @pytest.mark.parametrize("approved", [True, False])
 @pytest.mark.parametrize("name,args,event_name", [
-    ("propose_team", {"members": [{"persona": "test-worker", "name": "Sam"}]}, "team_proposed"),
-    ("propose_work_items", {"items": [{"title": "Verify invoices", "criteria": "Tests pass"}]}, "items_proposed"),
+    ("propose_team", team_proposal(), "team_proposed"),
+    ("propose_work_items", work_proposal(), "items_proposed"),
 ])
 def test_external_gate_answer_broadcasts_matching_completion_to_all_viewers(manager, approved, name, args, event_name):
     manager.provider = ScriptedProvider([_tool_turn(name, args, "proposal-id"), _text_turn("Finished")])

@@ -445,6 +445,9 @@ def build_engine(
     registry.register_all(clock_tools())
 
     instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
+    if agent.team == "lead":
+        from .teams.proposals import PROPOSAL_GUIDANCE
+        instructions += "\n\n" + PROPOSAL_GUIDANCE
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)

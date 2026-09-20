@@ -27,16 +27,16 @@ describe("TeamRequestCard", () => {
     expect(who?.contains(reason as Node)).toBe(false);
   });
 
-  it("labels the buttons Not now / Create team and moves the grant sentence into the title", () => {
+  it("requests actionable changes and makes staffing distinct from assignment", () => {
     const onRespond = vi.fn();
     render(<TeamRequestCard item={base} onRespond={onRespond} />);
     const approve = screen.getByTestId("teamreq-approve");
     expect(approve.textContent).toBe("Create team");
-    expect(approve.getAttribute("title")).toContain("Approving grants the lead create, assign & steer");
-    expect(approve.getAttribute("title")).toContain("Workers get only the connectors you tick.");
-    expect(screen.getByTestId("teamreq-card").textContent).not.toContain("Approving grants the lead");
-    fireEvent.click(screen.getByText("Not now"));
-    expect(onRespond).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId("teamreq-card").textContent).toContain("does not start these tasks");
+    fireEvent.click(screen.getByText("Request changes"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Add independent verification" } });
+    fireEvent.click(screen.getByText("Send feedback"));
+    expect(onRespond).toHaveBeenCalledWith(false, "Add independent verification");
   });
 
   it("an unsuggested default connector starts unticked, with no reason; ticks ride the approval", () => {

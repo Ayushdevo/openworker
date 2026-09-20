@@ -17,6 +17,7 @@ import aisuite as ai
 
 from .journal import JournalStore
 from .model import Actor, BoardError, Role
+from .proposals import WORK_PROPOSAL_SCHEMA, TEAM_PROPOSAL_SCHEMA, PROPOSAL_GUIDANCE
 from .store import TeamStore
 
 LEAD_VERBS = ("create_item", "list_items", "get_item", "transition", "comment", "assign", "link")
@@ -288,37 +289,7 @@ _PROPOSE_TEAM_SCHEMA = {
             " approval creates the worker sessions and returns the handles. Only"
             " team-capable worker coworkers may be proposed."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "members": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "persona": {"type": "string"},
-                            "name": {"type": "string"},
-                            "model": {"type": "string"},
-                            "reason": {"type": "string"},
-                            "connectors": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Connectors THIS worker needs (from team_options). They arrive pre-ticked for the user, who decides.",
-                            },
-                            "connector_reasons": {
-                                "type": "object",
-                                "additionalProperties": {"type": "string"},
-                                "description": "One short reason per suggested connector. Outside the worker's usual set, quote the user's own request.",
-                            },
-                        },
-                        "required": ["persona", "name"],
-                    },
-                },
-                "enable_chat": {"type": "boolean"},
-                "note": {"type": "string"},
-            },
-            "required": ["members"],
-        },
+        "parameters": TEAM_PROPOSAL_SCHEMA,
     },
 }
 
@@ -340,34 +311,19 @@ _PROPOSE_ITEMS_SCHEMA = {
             " and works in any mode — it is how a lead plans and coordinates via"
             " the board."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "criteria": {"type": "string"},
-                            "description": {"type": "string"},
-                            "case": {"type": "string"},
-                        },
-                        "required": ["title", "criteria"],
-                    },
-                },
-                "note": {"type": "string"},
-            },
-            "required": ["items"],
-        },
+        "parameters": WORK_PROPOSAL_SCHEMA,
     },
 }
 
 
+_PROPOSE_ITEMS_SCHEMA["function"]["description"] += "\n" + PROPOSAL_GUIDANCE
+_PROPOSE_TEAM_SCHEMA["function"]["description"] += "\n" + PROPOSAL_GUIDANCE
+
+
 def propose_work_items_tool() -> object:
-    def propose_work_items(items: Optional[list] = None, note: str = "") -> dict:
-        """Present proposed work items ({title, criteria, description?, case?})
-        for the user's approval; approval creates them on the board."""
+    def propose_work_items(**proposal) -> dict:
+        """Present a structured outcome, workstreams, criteria and declared actions.
+        Approval materializes the plan and dependency links on the board."""
         return {
             "approved": False,
             "error": "item proposals aren't available in this surface",
@@ -386,11 +342,8 @@ def propose_work_items_tool() -> object:
 
 
 def propose_team_tool() -> object:
-    def propose_team(
-        members: Optional[list] = None, enable_chat: bool = False, note: str = ""
-    ) -> dict:
-        """Propose the worker roster for this board (the staffing gate). Each member
-        is {persona, name, model?, reason?, connectors?, connector_reasons?}. Call
+    def propose_team(**proposal) -> dict:
+        """Propose grouped workers with planned responsibilities (the staffing gate). Call
         team_options first: it says which connectors each worker can be given here. The
         user approves and has the final say on connectors; approval creates the worker
         sessions and returns their actor ids for assignment."""
