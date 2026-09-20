@@ -84,6 +84,7 @@ import { SessionSetupRow } from "./components/SessionSetupRow";
 import { SendFolderDialog } from "./components/SendFolderDialog";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { reconcileResolvedGates, retireFinishedGate } from "./gateReconciliation";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
@@ -518,6 +519,11 @@ export function App() {
   // unattended session's blocking question/approval can be answered in context (resolving the
   // same item the Inbox shows; first responder wins).
   const [sessionInbox, setSessionInbox] = useState<InboxItem[]>([]);
+  const finishedGateCalls = useRef(new Map<string, Set<string>>());
+  const gateScope = `${machine || "local"}:${sessionId}`;
+  const pendingInbox = useCallback((inbox: InboxItem[]) => inbox.filter(it =>
+    it.state === "pending" && !(it.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(it.tool_call_id)),
+  ), [gateScope]);
   // Whether the active session is Unattended — when true, the agent's prompts route to the Inbox,
   // so we suppress the inline live cards (the Inbox / answer-in-context path shows them instead).
   // A ref too, because the WS event handler closes over stale state.
@@ -536,7 +542,7 @@ export function App() {
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
-    getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
+    getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
     refreshSessions(); // attention badge should drop right away
   };
   // MUST pick a folder before starting — requires_folder personas (git-bound Code, the
@@ -971,6 +977,15 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          if (d.tool_call_id && (d.name === "propose_team" || d.name === "propose_work_items")) {
+            const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+            calls.add(d.tool_call_id);
+            finishedGateCalls.current.set(gateScope, calls);
+          }
+          setItems(p => retireFinishedGate(p, d.name, d.tool_call_id));
+          if (d.tool_call_id) {
+            setSessionInbox(p => p.filter(it => it.tool_call_id !== d.tool_call_id));
+          }
           if (d.superseded_worker_call) {
             // Retire exactly the decision whose worker prompt was answered
             // elsewhere. The tool result remains as the non-action audit receipt.
@@ -1120,7 +1135,7 @@ export function App() {
               setUsage(usageFromMessages(m));
             })
             .catch(() => {});
-          getInbox(sessionId, "pending").then(setSessionInbox).catch(() => {});
+          getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
           return;
         }
         // Auto-send the pending message once the session connects ("Run now" prompts and
@@ -1267,14 +1282,23 @@ export function App() {
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
   useEffect(() => {
     if (surface !== "session") return;
+    let canceled = false;
+    let request = 0;
     const load = () => {
-      getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
-      getUnattended(sessionId).then(markUnattended).catch(() => markUnattended(false));
+      const current = ++request;
+      getInbox(sessionId).then(inbox => {
+        if (canceled || current !== request) return;
+        setSessionInbox(pendingInbox(inbox));
+        setItems(items => reconcileResolvedGates(items, inbox));
+      }).catch(() => {});
+      getUnattended(sessionId).then(value => {
+        if (!canceled && current === request) markUnattended(value);
+      }).catch(() => {});
     };
     load();
     const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [surface, sessionId, browserRefreshKey, markUnattended]);
+    return () => { canceled = true; clearInterval(t); };
+  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no

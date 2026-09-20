@@ -1918,7 +1918,7 @@ class TurnEngine:
         else:
             yield Event(
                 EventType.ITEMS_PROPOSED,
-                {"items": valid, "note": str(args.get("note", ""))},
+                {"items": valid, "note": str(args.get("note", "")), "tool_call_id": tool_call.id},
             )
             self._audit(tool_call, stage="items_proposed")
             result = await self._wait_tool(tool_call,
@@ -1941,6 +1941,7 @@ class TurnEngine:
                 "name": tool_call.name,
                 "status": status,
                 "result_preview": _preview(result),
+                "tool_call_id": tool_call.id,
             },
         )
 
@@ -2006,6 +2007,7 @@ class TurnEngine:
             yield Event(
                 EventType.TEAM_PROPOSED,
                 {
+                    "tool_call_id": tool_call.id,
                     "members": members,
                     "enable_chat": bool(args.get("enable_chat", False)),
                     "note": str(args.get("note", "")),
@@ -2038,6 +2040,7 @@ class TurnEngine:
                 "status": status,
                 "result_preview": _preview(result),
                 "display": {"team_created": created} if created else {},
+                "tool_call_id": tool_call.id,
             },
         )
 

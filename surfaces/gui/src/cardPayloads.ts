@@ -46,6 +46,7 @@ export function planItemFromPayload(d: any): PlanItem {
 export function teamItemFromPayload(d: any): TeamRequestItem {
   return {
     kind: "teamreq",
+    toolCallId: typeof d.tool_call_id === "string" ? d.tool_call_id : undefined,
     members: Array.isArray(d.members) ? d.members : [],
     enable_chat: !!d.enable_chat,
     note: d.note || "",
@@ -71,7 +72,8 @@ export function connectorItemFromPayload(d: any): ConnectorRequestItem {
 
 /** `items_proposed`, or a parked `gate: "items"` item. */
 export function workItemsItemFromPayload(d: any): WorkItemsItem {
-  return { kind: "itemsreq", items: Array.isArray(d.items) ? d.items : [], note: d.note || "" };
+  return { kind: "itemsreq", toolCallId: typeof d.tool_call_id === "string" ? d.tool_call_id : undefined,
+    items: Array.isArray(d.items) ? d.items : [], note: d.note || "" };
 }
 
 /** `directory_requested`. */

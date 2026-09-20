@@ -1810,6 +1810,7 @@ export async function setSessionSkill(
 // -- Inbox + Unattended -------------------------------------------------------
 export interface InboxItem {
   id: string;
+  tool_call_id?: string;
   session_id: string;
   kind: "approval" | "question" | "notification" | "directory" | "plan" | "tool" | "connector";
   title: string;

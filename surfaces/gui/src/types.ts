@@ -217,6 +217,7 @@ export type Item =
   | {
       // The staffing gate (agent teams): a lead proposes its worker roster.
       kind: "teamreq";
+      toolCallId?: string;
       // connectors = the LEAD'S SUGGESTION for this worker (arrives ticked on the card);
       // connector_reasons = why, per suggested connector.
       members: {
@@ -261,6 +262,7 @@ export type Item =
   | {
       // The decomposition gate: a lead proposes work items; approval creates them.
       kind: "itemsreq";
+      toolCallId?: string;
       items: { title: string; criteria: string; description?: string }[];
       note?: string;
       resolved?: "approved" | "rejected";
