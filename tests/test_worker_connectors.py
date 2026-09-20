@@ -553,6 +553,9 @@ def test_the_leads_approval_card_carries_the_workers_call(manager):
     """The parked approval for `decide_worker_call` shows WHAT the worker wants to run,
     looked up by call_id — not the id."""
     _lead(manager)
+    from coworker.teams.registry import TeamWorker
+    manager.teams.create(space="acme", lead_session="lead-sid", lead_actor="lead",
+        workers=[TeamWorker(actor="nia", persona="swe-worker", session_id="worker-sid")])
     parked = manager.inbox.add_approval(
         "worker-sid", "Run `run_shell`?", body="requires approval\ncommand: npm run build",
         data={"tool": "run_shell", "arguments": {"command": "npm run build"}},

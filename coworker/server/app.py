@@ -2881,11 +2881,6 @@ def create_app(manager: SessionManager) -> FastAPI:
                         # it COULD be given (declared ceiling ∩ connected) — computed here,
                         # where the manager is at hand; the engine only knows the roster.
                         data = {**data, **manager.team_card_extras(session_id, data.get("members") or [])}
-                    elif event.type is EventType.PERMISSION_REQUIRED and data.get("name") == "decide_worker_call":
-                        # The card shows the worker's call the lead is deciding, not its id.
-                        worker_call = manager.worker_call_for(data.get("arguments") or {})
-                        if worker_call:
-                            data = {**data, "worker_call": worker_call}
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(

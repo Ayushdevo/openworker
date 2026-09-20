@@ -971,6 +971,14 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          if (d.superseded_worker_call) {
+            // Retire exactly the decision whose worker prompt was answered
+            // elsewhere. The tool result remains as the non-action audit receipt.
+            setItems(p => p.filter(it => !(it.kind === "approval" &&
+              it.name === "decide_worker_call" && it.args?.call_id === d.superseded_worker_call)));
+            setSessionInbox(p => p.filter(it => !(it.data?.tool === "decide_worker_call" &&
+              it.data?.arguments?.call_id === d.superseded_worker_call)));
+          }
           if (d.display?.team_created?.team_id) {
             const c = d.display.team_created;
             setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);

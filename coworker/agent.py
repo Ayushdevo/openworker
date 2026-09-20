@@ -436,7 +436,7 @@ def build_engine(
         )
     # Self-wake: scheduling surfaces can suspend + schedule their own resumption (timer /
     # on-completion / on-event). The scheduler tick resumes due wakes.
-    if wake_store is not None and session_id and agent.scheduling:
+    if wake_store is not None and session_id and (agent.scheduling or agent.team == "lead"):
         registry.register_all(selfwake_tools(wake_store, session_id))
     # The clock, on demand, for every surface: the system prompt's "Today's date" is a
     # session-start snapshot, and the per-turn context block must not carry a live time

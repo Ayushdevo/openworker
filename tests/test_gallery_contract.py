@@ -172,6 +172,9 @@ def test_question_fields_match_the_gallery(contract):
 def test_lead_decision_payload_matches_the_gallery(manager, contract):
     """`decide_worker_call`: the parked approval carries the worker's call the card shows."""
     card = contract["worker-decision"]
+    from coworker.teams.registry import TeamWorker
+    manager.teams.create(space="acme", lead_session="lead-sid", lead_actor="lead",
+        workers=[TeamWorker(actor="nia", persona="swe-worker", session_id="worker-sid")])
     parked = manager.inbox.add_approval(
         "worker-sid", "Run `run_shell`?", body="requires approval\ncommand: npm run build",
         data={"tool": "run_shell", "arguments": {"command": "npm run build"}},

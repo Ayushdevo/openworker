@@ -12075,7 +12075,8 @@
               },
               "reason": "requires approval",
               "state": "pending"
-            }
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
           }
         },
         "lead-allows-command": {
@@ -12109,7 +12110,8 @@
                 "description": "Temporarily remove fix, confirm cross-account test fails, then restore"
               },
               "state": "pending"
-            }
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
           }
         },
         "lead-denies-file-change": {
@@ -12143,7 +12145,8 @@
                 "content": "export async function getInvoices(params: InvoiceQuery) {\n  const res = await http.get('/v1/invoices', { params });\n  return res.data.invoices;\n}\n"
               },
               "state": "pending"
-            }
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
           }
         },
         "already-answered": {
@@ -12177,7 +12180,8 @@
               },
               "state": "resolved",
               "resolution": "deny"
-            }
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
           }
         },
         "long-note": {
@@ -12210,7 +12214,8 @@
                 "command": "set -euo pipefail\ncd /home/user/work/billing-service/issue-1/web\ncurl -fsSL https://example.com/setup-node.sh | bash\nnpm ci\nnpm run build\ncp -r dist ../../issue-3/web/dist\nls -la ../../issue-3/web/dist"
               },
               "state": "pending"
-            }
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
           }
         },
         "old-server": {

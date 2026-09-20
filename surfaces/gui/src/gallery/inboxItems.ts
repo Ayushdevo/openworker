@@ -54,7 +54,7 @@ export const inboxItemBuilders: Partial<Record<string, (s: CardState<any>) => In
       "approval",
       `Run \`${p.name}\`?`,
       `requires approval\nworker: ${p.arguments.worker} · call_id: ${p.arguments.call_id} · decision: ${p.arguments.decision}`,
-      { tool: p.name, arguments: p.arguments, ...(p.worker_call ? { worker_call: p.worker_call } : {}) },
+      { tool: p.name, arguments: p.arguments, ...(p.worker_call ? { worker_call: p.worker_call, worker_prompt_id: p.arguments?.call_id } : {}) },
     ),
   "connector-request": ({ payload: p }) =>
     parked(

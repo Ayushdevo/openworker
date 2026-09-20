@@ -82,6 +82,7 @@ class ApprovalOutcome(str, Enum):
     # nothing persisted. EXTERNAL-risk tools only (validated server-side).
     THIS_RUN = "this_run"
     DENY = "deny"
+    SUPERSEDED = "superseded"
 
 
 def _readonly_ok(arguments: dict) -> bool:
@@ -492,11 +493,15 @@ class TurnEngine:
         if not pending:
             return
         self._cancel.clear()
+        self._yield_for_wake = False
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):
             yield event
         yield Event(EventType.ITERATION_END, {"iteration": 0})
         if not self._cancel.is_set():
+            if self._yield_for_wake:
+                yield Event(EventType.TURN_END, {"status": "sleeping", "iterations": 0})
+                return
             async for event in self._loop():
                 yield event
 
@@ -563,6 +568,7 @@ class TurnEngine:
         return []
 
     async def _loop(self) -> AsyncIterator[Event]:
+        self._yield_for_wake = False
         iterations = 0
         self._continuations = 0
         while True:
@@ -786,6 +792,9 @@ class TurnEngine:
             if self._cancel.is_set():
                 self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
+                return
+            if self._yield_for_wake:
+                yield Event(EventType.TURN_END, {"status": "sleeping", "iterations": iterations})
                 return
             if self._steering:
                 self._inject_steering()
@@ -1618,6 +1627,21 @@ class TurnEngine:
                 ),
                 interrupted=ApprovalOutcome.DENY,
             )
+            if outcome is ApprovalOutcome.SUPERSEDED:
+                result = {
+                    "skipped": True,
+                    "reason": "The worker request was already resolved. No further action was taken.",
+                }
+                self._approval_origins.pop(tool_call.id, None)
+                self.messages.append(self._timed_result(tool_call, result))
+                self._audit(tool_call, stage="approval_resolved", call_id=tool_call.id, status="superseded", reason=result["reason"])
+                self._audit(tool_call, stage="finished", status="skipped", reason=result["reason"])
+                yield Event(EventType.TOOL_FINISHED, {
+                    "name": tool_call.name, "status": "ok", "result_preview": json.dumps(result),
+                    "superseded_worker_call": (tool_call.arguments or {}).get("call_id") if tool_call.name == "decide_worker_call" else None,
+                })
+                yield False
+                return
             if outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
@@ -1717,6 +1741,12 @@ class TurnEngine:
             self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.monotonic() - clock) * 1000)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
+        spec = self.registry.get(tool_call.name)
+        if (
+            status == "ok" and isinstance(result, dict) and result.get("ok")
+            and spec and getattr(spec.func, "__coworker_yields_turn__", False)
+        ):
+            self._yield_for_wake = True
         self._step += 1
         if status == "ok":
             # Only successful calls: a write that raised left nothing on disk to run.

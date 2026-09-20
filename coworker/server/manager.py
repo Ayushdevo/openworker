@@ -2978,6 +2978,11 @@ class SessionManager:
         # on their slice (assigned ∪ filed) — comments, moves, reassignments. The
         # lead additionally subscribes to the board-wide decision classes.
         directs = self.team_store.feed_for(team.space, actor)
+        if not is_lead and directs and all(e["kind"] == WORKER_WAITING for e in directs):
+            # A wait owned by the lead/user is not work for a worker. Advance
+            # this informational-only batch so it cannot repeatedly wake them.
+            self.team_store.consume_feed(team.space, actor, max(e["seq"] for e in directs))
+            directs = []
         subs = (
             self.team_store.subscribed_events(team.space, actor) if is_lead else []
         )
@@ -3161,6 +3166,12 @@ class SessionManager:
                 lines.append(f"New item filed by {event['actor']}: {title}")
                 rows.append({**row, "kind": "filed"})
             elif event["kind"] == WORKER_WAITING:
+                if not is_lead:
+                    # A collaborator is not an approval authority. Keep the wait
+                    # informational when it accompanies actual assigned work.
+                    lines.append(f"{event['actor']} is waiting for the lead or user{(' on ' + title) if item_id is not None else ''}.")
+                    rows.append({**row, "kind": "waiting", "tool": payload.get("tool") or "", "prompt_id": payload.get("prompt_id", "")})
+                    continue
                 # §11.6: a worker parked on a tool call under a Manual lead — the lead
                 # decides (its decision asks the human), or the human answers directly.
                 tool = payload.get("tool") or "a tool"
@@ -5096,6 +5107,11 @@ class SessionManager:
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
         is dropped, never fatal to the turn (delivery is socket-independent)."""
+        data = message.get("data") or {}
+        if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
+            worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
+            if worker_call:
+                message = {**message, "data": {**data, "worker_call": worker_call}}
         for cb in list(self._session_clients.get(session_id, ())):
             try:
                 await cb(message)
@@ -5109,13 +5125,15 @@ class SessionManager:
         self.audit_store.close()
 
     # -- automation (scheduled tasks) -------------------------------------------
-    def worker_call_for(self, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    def worker_call_for(self, arguments: dict[str, Any], *, lead_session: str | None = None) -> dict[str, Any] | None:
         """The worker's waiting tool call that a lead's `decide_worker_call` answers
         (`call_id` is the worker's parked Inbox item). Attached to the lead's approval card
         so the human sees WHAT is being allowed or denied, not an id. None when the item is
         unknown or is not an approval."""
         item = self.inbox.get(str((arguments or {}).get("call_id") or ""))
         if item is None or item.kind != "approval":
+            return None
+        if lead_session is not None and not self._owned_worker_prompt(lead_session, arguments):
             return None
         data = item.data or {}
         task_fields = {}
@@ -5140,6 +5158,12 @@ class SessionManager:
             "resolution": item.resolution,
         }
 
+    def _owned_worker_prompt(self, lead_session: str, arguments: dict):
+        team = self.teams.for_lead_session(lead_session)
+        member = next((w for w in team.workers if w.actor == str(arguments.get("worker") or "").strip().lower()), None) if team else None
+        item = self.inbox.get(str(arguments.get("call_id") or ""))
+        return item if member and item and item.kind == "approval" and item.session_id == member.session_id else None
+
     def approval_prompt_data(self, session_id: str, request) -> dict[str, Any]:
         """Extra Inbox-item payload for a parked approval. Always carries the tool name +
         arguments so the GUI can render the same humanized card (§35) it shows live —
@@ -5154,9 +5178,12 @@ class SessionManager:
             "arguments": getattr(request, "arguments", None) or {},
         }
         if request.tool_name == "decide_worker_call":
-            worker_call = self.worker_call_for(getattr(request, "arguments", None) or {})
+            worker_call = self.worker_call_for(data["arguments"], lead_session=session_id)
             if worker_call:
                 data["worker_call"] = worker_call
+                # Store-owned dependency: atomically retires this redundant gate
+                # if the original worker prompt resolves before or after creation.
+                data["worker_prompt_id"] = str(data["arguments"]["call_id"])
         # §35 parity (OPE-136 found-in-testing): the parked card must show the same
         # scope chip and reason the live card would — carry the tool category, the
         # MCP destination stamped on the request, and any non-boilerplate reason.
@@ -5231,6 +5258,15 @@ class SessionManager:
         """
         from ..engine import ApprovalOutcome
 
+        if resolution == "superseded":
+            original = self._owned_worker_prompt(
+                session_id, getattr(request, "arguments", None) or {}
+            ) if request.tool_name == "decide_worker_call" else None
+            return (
+                ApprovalOutcome.SUPERSEDED
+                if original is not None and original.state == "resolved"
+                else ApprovalOutcome.DENY
+            )
         if resolution == "always_task":
             minted = self.mint_task_rule(
                 session_id,

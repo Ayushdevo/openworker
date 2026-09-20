@@ -188,4 +188,7 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         w = store.add_event(session_id, event_key, note=note)
         return {"ok": True, "wake_id": w.id, "event_key": event_key}
 
-    return [sleep_for, sleep_until, wake_on, wake_on_event]
+    tools = [sleep_for, sleep_until, wake_on, wake_on_event]
+    for tool in tools:
+        tool.__coworker_yields_turn__ = True
+    return tools
