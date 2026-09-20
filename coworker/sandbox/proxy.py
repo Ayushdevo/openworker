@@ -37,6 +37,9 @@ def proxy_tool(tool: Callable[..., Any], workspace: Any, *, root: str, roots: Op
     @functools.wraps(tool)
     def call(*args: Any, **kwargs: Any) -> Any:
         bound = signature.bind(*args, **kwargs)
+        sync = getattr(workspace, "sync_roots", None)
+        if sync is not None:
+            sync()  # a folder granted since the sandbox started: restart it with the new walls
         # The session's roots list is live (folders are granted while a session runs), so
         # it is read on every call, as the in-process tools do.
         live = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]

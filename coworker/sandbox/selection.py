@@ -16,10 +16,10 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from .workspace import DIRECT, OPENSHELL, PROVIDER_ENV, RUNNER_LOCAL
+from .workspace import DIRECT, OPENSHELL, PROVIDER_ENV, RUNNER_LOCAL, SEATBELT
 
 HEADLESS_ENV = "OPENWORKER_HEADLESS"  # set by `openworker up` / `join` for their process
-KNOWN = (DIRECT, OPENSHELL, RUNNER_LOCAL)
+KNOWN = (DIRECT, SEATBELT, OPENSHELL, RUNNER_LOCAL)
 _PROBE_SECONDS = 30.0
 
 _probe_lock = threading.Lock()
@@ -57,7 +57,8 @@ def openshell_problem(*, fresh: bool = False) -> Optional[str]:
 
 
 def select(configured: Optional[str] = None, *, headless: Optional[bool] = None) -> Selection:
-    """Raises `OpenShellUnavailable` when OpenShell was chosen explicitly and is not usable."""
+    """Raises `OpenShellUnavailable` or `SeatbeltUnavailable` when that sandbox was chosen
+    explicitly and is not usable: a silent fallback would hide the loss of protection."""
     chosen = (os.environ.get(PROVIDER_ENV) or configured or "").strip().lower()
     if chosen:
         if chosen not in KNOWN:
@@ -70,6 +71,15 @@ def select(configured: Optional[str] = None, *, headless: Optional[bool] = None)
                 raise OpenShellUnavailable(
                     f"This machine is set to run agents in OpenShell sandboxes, and OpenShell cannot be used right now, so no session will start. {problem}"
                 )
+        if chosen == SEATBELT:
+            from .providers import seatbelt
+
+            try:
+                seatbelt.preflight()
+            except seatbelt.SeatbeltUnavailable as exc:
+                raise seatbelt.SeatbeltUnavailable(
+                    f"This machine is set to run agents in the macOS sandbox (Seatbelt), and it cannot be used right now, so no session will start. {exc}"
+                ) from None
         return Selection(chosen, explicit=True)
     if headless if headless is not None else is_headless():
         problem = openshell_problem()

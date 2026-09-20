@@ -113,8 +113,9 @@ class Config:
     # off entirely; dev/BYO deployments point elsewhere.
     cloud_machines_base: str = "https://machines.openworker.com"
     # Where agents' commands and file tools run: "direct" (in this process, unconfined),
-    # "openshell" (one OpenShell sandbox per agent; sessions are refused when OpenShell is
-    # not usable). Unset = the default rule in coworker/sandbox/selection.py. Machine-level
+    # "seatbelt" (macOS: a process on this Mac under the system sandbox), "openshell" (one
+    # OpenShell sandbox per agent). Sessions are refused when the chosen sandbox is not
+    # usable. Unset = the default rule in coworker/sandbox/selection.py. Machine-level
     # only: a repository's own config must never be able to switch the sandbox off.
     # Environment override: OPENWORKER_SANDBOX_PROVIDER.
     sandbox_provider: Optional[str] = None

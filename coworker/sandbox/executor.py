@@ -29,8 +29,12 @@ class RunnerExecutor(Executor):
         shell: str = "main",
         default_timeout: float = _DEFAULT_TIMEOUT,
         on_output: Optional[Callable[[str], None]] = None,
+        before_call: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self._client = client
+        # Called before every command. The workspace uses it to restart the sandbox when the
+        # session's folders changed; what it returns is told to the agent with the result.
+        self._before_call = before_call
         self.shell = shell
         self.cwd = str(cwd)  # the last folder the runner reported; a reopened shell starts here
         self.default_timeout = default_timeout
@@ -49,6 +53,7 @@ class RunnerExecutor(Executor):
 
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]:
         timeout = timeout or self.default_timeout
+        notice = self._before_call() if self._before_call is not None else None
 
         def live(method: str, params: dict[str, Any]) -> None:
             if method == "shell.output" and self._on_output is not None:
@@ -65,7 +70,10 @@ class RunnerExecutor(Executor):
             return self._failed(command, exc.message)
         if isinstance(result.get("cwd"), str) and result["cwd"]:
             self.cwd = result["cwd"]
-        return {key: result[key] for key in _RESULT_KEYS if key in result}
+        answer = {key: result[key] for key in _RESULT_KEYS if key in result}
+        if notice:
+            answer["sandbox_notice"] = notice
+        return answer
 
     def run_background(self, command: str) -> dict[str, Any]:
         return self._simple("task.start", {"command": command, "cwd": self.cwd})

@@ -186,11 +186,23 @@ class OpenShellProvider:
             if "entries" not in info:
                 raise RuntimeError(f"the folder {root['path']} is not reachable inside the sandbox")
 
-    def destroy(self) -> None:
+    def regrant(self, roots: Sequence[dict[str, Any]]) -> None:
+        """The session's folders changed. Mounts and the file policy are fixed when a sandbox
+        is created, so this one is deleted and a new one is created with the new folders."""
+        self._delete()
+        self.roots = [{"path": str(Path(r["path"]).expanduser().resolve()), "writable": bool(r.get("writable"))} for r in roots]
+        self.sandbox_name = f"ow-{uuid.uuid4().hex[:12]}"
+        self.sandbox_id = None
+        self.create()
+
+    def _delete(self) -> None:
         try:
             _cli("sandbox", "delete", self.sandbox_name, timeout=90, check=False)
         except (subprocess.TimeoutExpired, OpenShellUnavailable):
             pass
+
+    def destroy(self) -> None:
+        self._delete()
         shutil.rmtree(self._tmp, ignore_errors=True)
 
 

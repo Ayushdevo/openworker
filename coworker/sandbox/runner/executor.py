@@ -73,6 +73,20 @@ class Executor(ABC):
         pass
 
 
+def _child_pids_darwin(parent: int) -> list[int]:
+    if sys.platform != "darwin":
+        return []
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = (ctypes.c_int * 256)()
+        count = lib.proc_listchildpids(parent, buf, ctypes.sizeof(buf))
+        return [int(pid) for pid in buf[: max(count, 0)] if pid > 0]
+    except (OSError, AttributeError):
+        return []
+
+
 class _BackgroundTask:
     """One detached background command: its own process (not the persistent shell), a
     reader thread draining output into a buffer, and an incremental-read cursor."""
@@ -405,7 +419,12 @@ class LocalExecutor(Executor):
                 capture_output=True,
                 text=True,
             )
-            for pid in found.stdout.split():
+            pids = found.stdout.split()
+            if found.returncode not in (0, 1):
+                # pgrep itself failed. Inside the macOS sandbox it cannot reach the service
+                # it lists processes with; the system library can still list OUR children.
+                pids = [str(pid) for pid in _child_pids_darwin(self._proc.pid)]
+            for pid in pids:
                 try:
                     os.kill(int(pid), signal.SIGINT)
                 except (ProcessLookupError, ValueError, OSError):

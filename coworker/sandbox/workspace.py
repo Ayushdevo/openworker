@@ -23,6 +23,12 @@ PROVIDER_ENV = "OPENWORKER_SANDBOX_PROVIDER"
 DIRECT = "direct"
 RUNNER_LOCAL = "runner-local"
 OPENSHELL = "openshell"
+SEATBELT = "seatbelt"
+
+RESTART_NOTICE = (
+    "The sandbox was restarted because the session's folders changed. The shell started again: "
+    "variables and background tasks from before are gone, files are untouched."
+)
 
 
 class Workspace(ABC):
@@ -62,6 +68,7 @@ class RunnerWorkspace(Workspace):
         registry: Any = None,
         session_id: str = "",
         agent: str = "",
+        live_roots: Optional[list] = None,
     ) -> None:
         from .client import RunnerClient
         from .executor import RunnerExecutor
@@ -69,6 +76,10 @@ class RunnerWorkspace(Workspace):
         self.provider = provider
         self.registry = registry
         self._registered: Optional[str] = None
+        self._session_id, self._agent = session_id, agent
+        # The session's own RootDir list. It changes while the session runs (a folder is
+        # granted or taken away); a sandbox's walls are fixed when it starts.
+        self._live_roots = live_roots
         if registry is not None:
             registry.reap()  # sandboxes left behind by a server that is gone
             registry.check_room()
@@ -82,19 +93,48 @@ class RunnerWorkspace(Workspace):
         except Exception:
             provider.destroy()
             raise
-        self._executor = RunnerExecutor(self.client, cwd=str(Path(cwd).expanduser().resolve()), shell=shell)
-        if registry is not None:
-            info = provider.describe()
-            self._registered = str(info.get("sandbox") or f"{info['provider']}-{id(self):x}")
-            registry.record(
-                self._registered,
-                provider=info["provider"],
-                session_id=session_id,
-                agent=agent,
-                roots=getattr(provider, "roots", None),
-                profile=getattr(provider, "profile", ""),
-                enforcement=info.get("enforcement", ""),
-            )
+        self._executor = RunnerExecutor(
+            self.client, cwd=str(Path(cwd).expanduser().resolve()), shell=shell, before_call=self.sync_roots
+        )
+        self._record()
+
+    def _record(self) -> None:
+        """Enter this sandbox in the registry; after a restart that replaced it, under its
+        new name."""
+        if self.registry is None:
+            return
+        info = self.provider.describe()
+        name = str(info.get("sandbox") or f"{info['provider']}-{id(self):x}")
+        if self._registered and self._registered != name:
+            self.registry.close(self._registered)
+        self._registered = name
+        self.registry.record(
+            name,
+            provider=info["provider"],
+            session_id=self._session_id,
+            agent=self._agent,
+            roots=getattr(self.provider, "roots", None),
+            profile=getattr(self.provider, "profile", ""),
+            enforcement=info.get("enforcement", ""),
+        )
+
+    def sync_roots(self) -> Optional[str]:
+        """Restart the sandbox when the session's folders are no longer the ones it was
+        started with (design ruling 15). Returns what to tell the agent, or None."""
+        regrant = getattr(self.provider, "regrant", None)
+        if regrant is None or self._live_roots is None:
+            return None
+        wanted = [{"path": str(r.path), "writable": bool(r.writable)} for r in self._live_roots]
+        if not wanted or _same_roots(wanted, getattr(self.provider, "roots", [])):
+            return None
+        self.client.detach()
+        regrant(wanted)
+        self.client.connect()  # a new runner: the client notes the restart
+        verify = getattr(self.provider, "verify", None)
+        if verify is not None:
+            verify(self.client)
+        self._record()
+        return RESTART_NOTICE
 
     @property
     def executor(self) -> Executor:
@@ -111,6 +151,13 @@ class RunnerWorkspace(Workspace):
             self.provider.destroy()
             if self.registry is not None and self._registered:
                 self.registry.close(self._registered)
+
+
+def _same_roots(a: list, b: list) -> bool:
+    def key(roots: list) -> set:
+        return {(os.path.realpath(str(r["path"])), bool(r.get("writable"))) for r in roots}
+
+    return key(a) == key(b)
 
 
 def provider_name(explicit: Optional[str] = None) -> str:
@@ -136,11 +183,22 @@ def open_workspace(
         from .providers.runner_local import RunnerLocalProvider
 
         return RunnerWorkspace(RunnerLocalProvider(cwd=cwd), cwd=cwd)
+    listed = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]
+    listed = listed or [{"path": str(cwd), "writable": True}]
+    if name == SEATBELT:
+        from .providers.seatbelt import SeatbeltProvider
+        from .registry import SandboxRegistry
+
+        return RunnerWorkspace(
+            SeatbeltProvider(roots=listed, cwd=str(cwd)),
+            cwd=cwd,
+            registry=SandboxRegistry(),
+            session_id=session_id,
+            agent=agent,
+            live_roots=roots,
+        )
     if name == OPENSHELL:
         from .providers.openshell import OpenShellProvider
-
-        listed = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]
-        listed = listed or [{"path": str(cwd), "writable": True}]
         from .registry import SandboxRegistry
 
         label = "-".join(part for part in (session_id[:24], agent[:24]) if part)
@@ -150,5 +208,6 @@ def open_workspace(
             registry=SandboxRegistry(),
             session_id=session_id,
             agent=agent,
+            live_roots=roots,
         )
-    raise ValueError(f"unknown sandbox provider: {name!r} (known: {DIRECT}, {OPENSHELL}, {RUNNER_LOCAL})")
+    raise ValueError(f"unknown sandbox provider: {name!r} (known: {DIRECT}, {SEATBELT}, {OPENSHELL}, {RUNNER_LOCAL})")

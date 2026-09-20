@@ -86,6 +86,17 @@ class RunnerClient:
                 self._send(transport, frame)
         return hello
 
+    def detach(self) -> None:
+        """The provider is about to replace the runner on purpose (a sandbox restart). Drop
+        this connection without the automatic reconnect, which would chase a runner that is
+        going away. `connect()` follows."""
+        with self._connect_lock:
+            with self._state_lock:
+                self._generation += 1  # the old read loop sees a newer generation and stops
+                transport, self._transport = self._transport, None
+            if transport is not None:
+                transport.close()
+
     def _reconnect(self, generation: int) -> None:
         with self._connect_lock:
             if self._closed or generation != self._generation:

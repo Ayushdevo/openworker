@@ -63,7 +63,22 @@ def checks() -> list[tuple[str, bool, str]]:
     return out
 
 
+def seatbelt_check() -> tuple[str, bool, str]:
+    from .providers import seatbelt
+
+    try:
+        seatbelt.preflight()
+        return ("the macOS sandbox (Seatbelt) can be used", True, "")
+    except seatbelt.SeatbeltUnavailable as exc:
+        return ("the macOS sandbox (Seatbelt) can be used", False, str(exc))
+
+
 def status(print_fn: Callable[[str], None] = print) -> int:
+    if sys.platform == "darwin":
+        what, ok, detail = seatbelt_check()
+        print_fn(f"  [{'ok' if ok else '--'}] {what}" + (f"  ({detail})" if detail else ""))
+        print_fn("       to use it: set `sandbox_provider = \"seatbelt\"` in " + str(app_config.global_config_path()))
+        print_fn("\nOpenShell on this machine:")
     rows = checks()
     for what, ok, detail in rows:
         print_fn(f"  [{'ok' if ok else '--'}] {what}" + (f"  ({detail})" if detail and not ok else ""))

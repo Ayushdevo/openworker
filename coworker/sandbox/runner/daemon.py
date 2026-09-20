@@ -23,6 +23,7 @@ from __future__ import annotations
 import collections
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -381,8 +382,14 @@ class Daemon:
             os.unlink(self.socket_path)
         except OSError:
             pass
+        folder = os.path.dirname(self.socket_path)
         try:
-            os.rmdir(os.path.dirname(self.socket_path))  # only if the socket had its own folder
+            if os.path.basename(folder).startswith("owr-"):
+                # A folder a provider made for this one runner (socket, temporary files, log).
+                # Nobody else cleans it up when the server was killed.
+                shutil.rmtree(folder, ignore_errors=True)
+            else:
+                os.rmdir(folder)  # only if the socket had its own folder
         except OSError:
             pass
 

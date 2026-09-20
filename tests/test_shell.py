@@ -35,6 +35,8 @@ PRINT_1000 = (
 # the same contract served by a tool runner in another process (the sandbox path). The two
 # must not drift apart. The runner needs Unix sockets, so it is skipped on Windows.
 _EXECUTORS = ["direct"] if _WIN else ["direct", "runner"]
+if sys.platform == "darwin":
+    _EXECUTORS.append("seatbelt")  # the same runner, inside the macOS sandbox
 
 
 @pytest.fixture(params=_EXECUTORS)
@@ -47,7 +49,19 @@ def executor(request, tmp_path):
     from coworker.sandbox.providers.runner_local import RunnerLocalProvider
     from coworker.sandbox.workspace import RunnerWorkspace
 
-    ws = RunnerWorkspace(RunnerLocalProvider(cwd=tmp_path, runner_path=_runner_zipapp(tmp_path)), cwd=tmp_path)
+    if request.param == "seatbelt":
+        from coworker.sandbox.providers import seatbelt
+
+        try:
+            seatbelt.preflight()
+        except seatbelt.SeatbeltUnavailable as exc:
+            pytest.skip(str(exc))
+        provider = seatbelt.SeatbeltProvider(
+            roots=[{"path": str(tmp_path), "writable": True}], cwd=tmp_path, runner_path=_runner_zipapp(tmp_path), network=False
+        )
+    else:
+        provider = RunnerLocalProvider(cwd=tmp_path, runner_path=_runner_zipapp(tmp_path))
+    ws = RunnerWorkspace(provider, cwd=tmp_path)
     ws.executor.default_timeout = 10
     yield ws.executor
     ws.close()
