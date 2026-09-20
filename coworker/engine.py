@@ -294,7 +294,7 @@ class TurnEngine:
         self._continuations = 0
         self._warned_context_fallback = False
         # Each pending steering message: (text, optional MessageSource sidecar dict).
-        self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
+        self._steering: list[tuple[str, Optional[dict[str, Any]], Optional[dict[str, Any]]]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
@@ -345,9 +345,10 @@ class TurnEngine:
         return message
 
     def queue_steering(
-        self, text: str, source: Optional[dict[str, Any]] = None
+        self, text: str, source: Optional[dict[str, Any]] = None,
+        activity: Optional[dict[str, Any]] = None,
     ) -> None:
-        self._steering.append((text, source))
+        self._steering.append((text, source, activity))
 
     # -- main loop --------------------------------------------------------------
     async def run(
@@ -356,6 +357,7 @@ class TurnEngine:
         *,
         source: Optional[dict[str, Any]] = None,
         display: Optional[str] = None,
+        activity: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
@@ -379,6 +381,8 @@ class TurnEngine:
             message["source"] = source
         if display is not None:
             message["_display"] = display
+        if activity:
+            message["_activity"] = activity
         self.messages.append(message)
         self._cancel.clear()
         if self.session_facts is not None:
@@ -793,11 +797,12 @@ class TurnEngine:
                 self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
-            if self._yield_for_wake:
+            if self._yield_for_wake and not self._steering:
                 yield Event(EventType.TURN_END, {"status": "sleeping", "iterations": iterations})
                 return
             if self._steering:
                 self._inject_steering()
+                self._yield_for_wake = False
 
     # -- auto-compaction (OPE-27) ------------------------------------------------
     def _compaction_config(self) -> dict[str, Any]:
@@ -2335,7 +2340,7 @@ class TurnEngine:
                 self._ask_replies.append((anchor, text, q))
 
     def _inject_steering(self) -> None:
-        for text, source in self._steering:
+        for text, source, activity in self._steering:
             message: dict[str, Any] = {
                 "role": "user",
                 "content": text,
@@ -2343,6 +2348,8 @@ class TurnEngine:
             }
             if source is not None:
                 message["source"] = source
+            if activity:
+                message["_activity"] = activity
             self.messages.append(message)
         self._steering = []
 
@@ -2364,6 +2371,7 @@ class TurnEngine:
         # display-only too: dropped entirely.
         _SIDECARS = (
             "source",
+            "_activity",
             "timing",
             "_display",
             "ts",
@@ -2381,6 +2389,16 @@ class TurnEngine:
         source_messages = _compaction.apply_to_outbound(
             self.messages, self.compaction_state
         )
+        # Runtime receipts stay out of provider payloads. Reminder/board context is
+        # earlier agent context, not words attributed to the incoming user and never
+        # a system instruction. Keep the actual user message verbatim and last.
+        expanded = []
+        for msg in source_messages:
+            context = (msg.get("_activity") or {}).get("text")
+            if context:
+                expanded.append({"role": "assistant", "content": context})
+            expanded.append(msg)
+        source_messages = expanded
         out = [
             (
                 # OPE-171: a length-truncated, action-free reply is replayed as a stub.

@@ -2550,6 +2550,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
+                manager.note_worker_waiting(session_id, "ask_user", prompt_id=item.id, preview=item.title)
                 if item.visibility == VIS_INBOX:
                     await _mirror(item)
                 else:
@@ -2874,7 +2875,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                 events = (
                     engine.retry()
                     if retry
-                    else engine.run(content, display=display)
+                    else engine.run(content, display=display,
+                                    activity=manager.prepare_activity(session_id, "user activity"))
                 )
                 async for event in events:
                     data = event.data
@@ -3029,7 +3031,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     else:
                         engine.approve_action_once(name, arguments or {})
                 elif kind == "interrupt":
-                    engine.request_interrupt()
+                    manager.stop_session(session_id)
                 elif kind == "retry":
                     # Re-run after a provider error (engine guards on the error-notice
                     # tail, so a stray frame is a no-op that still ends with turn_done).

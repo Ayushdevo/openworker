@@ -379,6 +379,9 @@ class SessionManager:
         # board; the log carries only `attachment://` refs.
         self.attachment_store = AttachmentStore(base / "attachments")
         self._team_inflight: set[str] = set()
+        self._team_batch_deadlines: dict[str, float] = {}
+        self._team_batch_handles: dict[str, Any] = {}
+        self._activity_acknowledged: set[str] = set()
         # Lead-session last-turn timestamps for the check-in backstop (monotonic-ish
         # wall clock; restart resets the clock rather than firing a wake storm).
         self._team_last_alive: dict[str, float] = {}
@@ -688,6 +691,7 @@ class SessionManager:
     ) -> Optional[TurnEngine]:
         engine = self._engines.get(session_id)
         self.reconcile_obsolete_prompts(session_id)
+        self.reconcile_activity_receipts(session_id)
         if engine is not None:
             self.sync_worker_mode(session_id, engine)
             if approver is not None:
@@ -1416,6 +1420,7 @@ class SessionManager:
             ):  # durable resume re-raised an already-answered prompt
                 return answer_result(item.questions, item.resolution)
             self.persist_session(session_id)  # the pending tool call is now on disk
+            self.note_worker_waiting(session_id, "ask_user", prompt_id=item.id, preview=item.title)
             await self.mirror_inbox_item(item)
             answer = await self.inbox.wait(item.id)
             return answer_result(item.questions, answer)
@@ -2955,9 +2960,12 @@ class SessionManager:
     # a running team — and it de-facto covers a worker dying without a transition
     # (its item goes stale; the backstop wake surfaces it in the digest).
     TEAM_LEAD_BACKSTOP_SECS = 600
+    TEAM_BATCH_SECONDS = 2.0
 
     def _lead_backstop_due(self, team) -> bool:
         sid = team.lead_session
+        if sid in self.wakes.stopped_sessions:
+            return False
         if self.is_running(sid) or sid in self._team_inflight:
             return False
         if self.wakes.pending(sid):
@@ -3004,6 +3012,9 @@ class SessionManager:
     async def _drain_team_member(
         self, team, *, session_id: str, actor: str, is_lead: bool
     ) -> int:
+        self.reconcile_activity_receipts(session_id)
+        if session_id in self.wakes.stopped_sessions:
+            return 0
         # Interest follows the assignment relation: everyone's feed is the events
         # on their slice (assigned ∪ filed) — comments, moves, reassignments. The
         # lead additionally subscribes to the board-wide decision classes.
@@ -3049,41 +3060,138 @@ class SessionManager:
             if engine is not None:
                 engine.request_interrupt()
         if not directs and not subs and not chats:
+            self._clear_team_batch(session_id)
             return 0
+        message, rows = self._team_digest(
+            team, directs, subs, chats, is_lead=is_lead, reader=actor
+        )
+        if not rows:
+            self._consume_board_receipt(self._board_receipt(team, actor, directs, subs, chats, chat_handle))
+            self._clear_team_batch(session_id)
+            return 0
+        if is_lead:
+            deadline = self._team_batch_deadlines.setdefault(session_id, time.monotonic() + self.TEAM_BATCH_SECONDS)
+            urgent = any(r.get("kind") == "waiting" or (r.get("to") == "blocked" and not r.get("historical")) for r in rows)
+            timer_due = any(w.session_id == session_id and w.kind == "timer" for w in self.wakes.due())
+            if not urgent and not timer_due and time.monotonic() < deadline:
+                if session_id not in self._team_batch_handles:
+                    loop = asyncio.get_running_loop()
+                    def flush():
+                        self._team_batch_handles.pop(session_id, None)
+                        asyncio.create_task(self.team_tick())
+                    self._team_batch_handles[session_id] = loop.call_later(max(0, deadline - time.monotonic()), flush)
+                return 0
         if self.is_running(session_id) or session_id in self._team_inflight:
             return 0  # it will drain on its next turn end / next tick
         if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
             logger.warning("team %s paused for budget this hour", team.team_id)
             return 0
-        message, rows = self._team_digest(
-            team, directs, subs, chats, is_lead=is_lead, reader=actor
-        )
+        self._clear_team_batch(session_id)
         self._team_inflight.add(session_id)
         source = self._board_source(team, message, rows=rows)
 
         async def _deliver() -> None:
             try:
                 await self.deliver_to_session(session_id, message, source=source)
-                # Consume only after the turn dispatched: a crash before this replays
-                # the batch next tick (at-least-once, never silently lost).
-                # The feed cursor advances past BOTH batches: a subs event deduped
-                # out of directs must not replay as a direct next tick.
-                delivered = [e["seq"] for e in directs] + [e["seq"] for e in subs]
-                if delivered:
-                    self.team_store.consume_feed(team.space, actor, max(delivered))
-                if subs:
-                    self.team_store.consume_subscription(
-                        team.space, actor, subs[-1]["seq"]
-                    )
-                if chats:
-                    self.chat_store.consume(
-                        team.chat_group, chat_handle, chats[-1]["seq"]
-                    )
+                # Cursors are acknowledged with the persisted incoming turn, not
+                # after model completion. A user turn can consume this batch first.
             finally:
                 self._team_inflight.discard(session_id)
+                self.kick_team_tick()
 
         asyncio.create_task(_deliver())
         return 1
+
+    def _clear_team_batch(self, session_id: str) -> None:
+        self._team_batch_deadlines.pop(session_id, None)
+        handle = self._team_batch_handles.pop(session_id, None)
+        if handle is not None:
+            handle.cancel()
+
+    @staticmethod
+    def _board_receipt(team, actor, directs, subs, chats, chat_handle) -> dict:
+        return {"space": team.space, "actor": actor,
+                "feed": max([e["seq"] for e in directs + subs], default=0),
+                "subscription": max([e["seq"] for e in subs], default=0),
+                "chat_group": team.chat_group, "chat_handle": chat_handle,
+                "chat": max([e["seq"] for e in chats], default=0)}
+
+    def _consume_board_receipt(self, receipt: dict) -> None:
+        if receipt.get("feed"):
+            self.team_store.consume_feed(receipt["space"], receipt["actor"], receipt["feed"])
+        if receipt.get("subscription"):
+            self.team_store.consume_subscription(receipt["space"], receipt["actor"], receipt["subscription"])
+        if receipt.get("chat"):
+            self.chat_store.consume(receipt["chat_group"], receipt["chat_handle"], receipt["chat"])
+
+    def _pending_board_context(self, session_id: str) -> tuple[str, list, dict]:
+        team = self.teams.for_lead_session(session_id)
+        is_lead = team is not None
+        found = self.teams.for_worker_session(session_id) if not team else None
+        if found:
+            team, worker = found
+        if team is None or team.paused:
+            return "", [], {}
+        actor = team.lead_actor if is_lead else worker.actor
+        directs = self.team_store.feed_for(team.space, actor)
+        subs = self.team_store.subscribed_events(team.space, actor) if is_lead else []
+        engine = self._engines.get(session_id)
+        queued = [(a or {}).get("board") or {} for _, _, a in (engine._steering if engine else [])]
+        feed_through = max([r.get("feed", 0) for r in queued], default=0)
+        sub_through = max([r.get("subscription", 0) for r in queued], default=0)
+        directs = [e for e in directs if e["seq"] > feed_through]
+        subs = [e for e in subs if e["seq"] > sub_through]
+        seen = {e["seq"] for e in subs}
+        directs = [e for e in directs if e["seq"] not in seen]
+        handle = "lead" if is_lead else actor
+        chats = self.chat_store.unread_for(team.chat_group, handle) if team.chat_enabled and team.chat_group else []
+        chat_through = max([r.get("chat", 0) for r in queued], default=0)
+        chats = [e for e in chats if e["seq"] > chat_through]
+        receipt = self._board_receipt(team, actor, directs, subs, chats, handle)
+        if not is_lead:
+            directs = [e for e in directs if e["kind"] != WORKER_WAITING]
+        text, rows = self._team_digest(team, directs, subs, chats, is_lead=is_lead, reader=actor)
+        return text if rows else "", rows, receipt
+
+    def prepare_activity(self, session_id: str, reason: str, *, wake=None, include_board=True) -> dict:
+        """Cancel idle sleep and gather context; acknowledgement waits for durable input."""
+        self.reconcile_activity_receipts(session_id)
+        if reason == "user activity":
+            self.wakes.set_stopped(session_id, False)
+        if wake is None or wake.kind != "timer":
+            self.wakes.cancel_sleep(session_id, reason)
+        cancelled = self.wakes.cancelled_context(session_id)
+        engine = self._engines.get(session_id)
+        queued_ids = {wid for _, _, a in (engine._steering if engine else [])
+                      for wid in (a or {}).get("wake_ids", [])}
+        cancelled = [w for w in cancelled if w.id not in queued_ids]
+        notes = [f"The earlier check-in ({w.fire_at}) was cancelled because {w.cancellation_reason}."
+                 + (f" Earlier agent reminder: {w.note}" if w.note else "") for w in cancelled]
+        text, rows, receipt = self._pending_board_context(session_id) if include_board else ("", [], {})
+        if text and reason != "board activity":
+            notes.append(text)
+        if notes:
+            notes.insert(0, "Runtime activity context. Reminders below were written by the agent earlier; newer user instructions take precedence.")
+        return {"id": uuid.uuid4().hex, "text": "\n\n".join(notes), "wake_ids": [w.id for w in cancelled] + ([wake.id] if wake else []),
+                "board": receipt, "board_text": text, "board_rows": rows}
+
+    def reconcile_activity_receipts(self, session_id: str) -> None:
+        record = self.session_store.load(session_id)
+        messages = record.messages if record else []
+        for message in messages:
+            receipt = message.get("_activity")
+            if receipt and receipt.get("id") not in self._activity_acknowledged:
+                self.wakes.acknowledge(receipt.get("wake_ids", []))
+                self._consume_board_receipt(receipt.get("board") or {})
+                self._activity_acknowledged.add(receipt.get("id"))
+
+    def stop_session(self, session_id: str) -> None:
+        self.wakes.set_stopped(session_id, True)
+        self.wakes.cancel_sleep(session_id, "the user stopped the session")
+        self._clear_team_batch(session_id)
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.request_interrupt()
 
     # Long comment/hand-off bodies are already durable on the board — the wake
     # message's job is to say what needs DECISIONS, not to re-carry the evidence
@@ -3119,7 +3227,12 @@ class SessionManager:
         )
         lines: list[str] = []
         rows: list[dict] = []
-        for event in sorted(directs + subs, key=lambda e: e["seq"]):
+        ordered = sorted(directs + subs, key=lambda e: e["seq"])
+        first = {}
+        for event in ordered:
+            first.setdefault(event.get("item_id"), event["seq"])
+        # Group related changes, preserving every ordered transition within an item.
+        for event in sorted(ordered, key=lambda e: (first[e.get("item_id")], e["seq"])):
             item_id = event.get("item_id")
             payload = event.get("payload") or {}
             item = None
@@ -3173,6 +3286,9 @@ class SessionManager:
                 to = payload.get("to", "?")
                 comment = clamp(payload.get("comment") or "")
                 note = f" — “{comment}”" if comment else ""
+                historical = bool(item and item.get("state") != to)
+                if historical:
+                    note += f" (historical transition; current state: {item['state']})"
                 if to == "canceled" and not is_lead:
                     lines.append(
                         f"{title} was CANCELED by {event['actor']}{note} — stop any"
@@ -3187,6 +3303,8 @@ class SessionManager:
                         "from": payload.get("from"),
                         "refs": payload.get("refs") or [],
                         "to": to,
+                        "historical": historical,
+                        "current_state": item.get("state") if item else None,
                         "note": self._clamp(
                             payload.get("comment") or "", self.DIGEST_CLAMP_UI
                         ),
@@ -3201,6 +3319,15 @@ class SessionManager:
                     # informational when it accompanies actual assigned work.
                     lines.append(f"{event['actor']} is waiting for the lead or user{(' on ' + title) if item_id is not None else ''}.")
                     rows.append({**row, "kind": "waiting", "tool": payload.get("tool") or "", "prompt_id": payload.get("prompt_id", "")})
+                    continue
+                prompt = self.inbox.get(payload.get("prompt_id", ""))
+                if prompt is None or prompt.state != "pending":
+                    continue  # resolved/reissued approvals are history, not decisions
+                if prompt.kind != "approval":
+                    lines.append(f"{event['actor']} needs a human answer: {clamp(prompt.title)}."
+                                 " The user answers in the worker session or Inbox; do not use decide_worker_call for this question.")
+                    rows.append({**row, "kind": "waiting", "tool": payload.get("tool") or "ask_user",
+                                 "note": self._clamp(prompt.title, self.DIGEST_CLAMP_UI), "prompt_id": prompt.id})
                     continue
                 # §11.6: a worker parked on a tool call under a Manual lead — the lead
                 # decides (its decision asks the human), or the human answers directly.
@@ -3245,6 +3372,7 @@ class SessionManager:
                 "Team update — your team needs decisions:\n"
                 + body
                 + "\n\nFull hand-off comments live on the board (get_item)."
+                " Act on current state only, not historical transitions."
                 " Verify review items against their acceptance criteria (then"
                 " done, or send back with a comment), unblock or reassign blocked"
                 " items, and triage new filings. Steer only where needed."
@@ -5139,6 +5267,20 @@ class SessionManager:
         is dropped, never fatal to the turn (delivery is socket-independent)."""
         if message.get("type") == "turn_start":
             self.reconcile_obsolete_prompts(session_id)
+        engine = self._engines.get(session_id)
+        if message.get("type") == "iteration_end" and engine and engine._steering:
+            # A sleep tool may finish after steering was queued. The accepted
+            # interruption still wins; carry that newly registered note too.
+            extra = self.prepare_activity(session_id, "user activity", include_board=False)
+            text, source, activity = engine._steering[0]
+            activity = activity or extra
+            if activity is not extra:
+                activity["text"] = "\n\n".join(filter(None, [activity.get("text"), extra["text"]]))
+                activity["wake_ids"] = list(dict.fromkeys(activity.get("wake_ids", []) + extra["wake_ids"]))
+            engine._steering[0] = (text, source, activity)
+        if message.get("type") in {"turn_start", "iteration_end", "permission_required", "turn_done"}:
+            self.persist_session(session_id)
+            self.reconcile_activity_receipts(session_id)
         data = message.get("data") or {}
         if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
             worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
@@ -5151,6 +5293,9 @@ class SessionManager:
                 self.unregister_session_client(session_id, cb)
 
     async def aclose(self) -> None:
+        for handle in self._team_batch_handles.values():
+            handle.cancel()
+        self._team_batch_handles.clear()
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
@@ -5586,14 +5731,14 @@ class SessionManager:
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
-        """The shared per-tick work: resume due self-wakes, then drain team queues.
+        """Drain team queues before due sleeps so simultaneous activity combines.
         Team deliveries dispatch as tasks (a long worker turn must not stall the
         scheduler)."""
-        await self.resume_due_wakes()
         try:
             await self.team_tick()
         except Exception:
             logger.exception("team tick failed")
+        await self.resume_due_wakes()
 
     async def resume_due_wakes(self) -> int:
         """Resume sessions whose self-wakes are due (called each scheduler tick). A suspended
@@ -5602,13 +5747,25 @@ class SessionManager:
         """
         resumed = 0
         for wake in self.wakes.due():
-            try:
-                await self._resume_wake(wake)
-                resumed += 1
-            except Exception:
-                pass
-            finally:
-                self.wakes.mark_fired(wake.id)
+            self.reconcile_activity_receipts(wake.session_id)
+            if wake not in self.wakes.pending(wake.session_id):
+                continue
+            if self.is_running(wake.session_id) or wake.session_id in self._team_inflight:
+                continue
+            if wake.kind == "timer" and wake.session_id in self.wakes.stopped_sessions:
+                self.wakes.cancel_sleep(wake.session_id, "the user stopped the session")
+                continue
+            self._team_inflight.add(wake.session_id)
+            async def deliver(wake=wake):
+                try:
+                    await self._resume_wake(wake)
+                except Exception:
+                    logger.exception("self-wake delivery failed for %s", wake.session_id)
+                finally:
+                    self._team_inflight.discard(wake.session_id)
+                    self.kick_team_tick()
+            asyncio.create_task(deliver())
+            resumed += 1
         return resumed
 
     def mark_running(self, session_id: str) -> None:
@@ -5631,6 +5788,8 @@ class SessionManager:
 
     def mark_idle(self, session_id: str) -> None:
         self._running_sessions.discard(session_id)
+        if session_id in self.wakes.stopped_sessions:
+            self.wakes.cancel_sleep(session_id, "the user stopped the session")
         if session_id in self._stale_engines:
             self._stale_engines.discard(session_id)
             self._engines.pop(session_id, None)
@@ -5665,11 +5824,11 @@ class SessionManager:
         digest = self.team_staleness_digest(wake.session_id)
         if digest:
             message = f"{message}\n\n{digest}"
-        await self.deliver_to_session(wake.session_id, message)
+        await self.deliver_to_session(wake.session_id, message, wake=wake)
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
-    ) -> None:
+        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None
+    ) -> bool:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
         turn at its next step (don't start a colliding run). Idle: run a fresh background turn
@@ -5679,12 +5838,29 @@ class SessionManager:
         """
         engine = self.get_engine(session_id)
         if engine is None:
-            return
+            return False
+        board_delivery = (source or {}).get("connector") == "board"
+        if wake is not None and wake not in self.wakes.pending(session_id):
+            return False  # user/board activity won the scheduled-task race
+        if board_delivery and session_id in self.wakes.stopped_sessions:
+            return False
+        if board_delivery and not self._pending_board_context(session_id)[0]:
+            # Backstop messages are not feed deliveries.
+            if (source or {}).get("board", {}).get("rows"):
+                return False
         if not self.try_mark_running(session_id):
-            engine.queue_steering(message, source)
-            return
+            if board_delivery or wake is not None:
+                return False  # defer; never inject routine wakes into a running turn
+            activity = self.prepare_activity(session_id, "user activity")
+            engine.queue_steering(message, source, activity)
+            return True
         try:
-            async for event in engine.run(message, source=source):
+            reason = "board activity" if board_delivery else "a scheduled check-in" if wake else "user activity"
+            activity = self.prepare_activity(session_id, reason, wake=wake)
+            if board_delivery and activity["board_text"]:
+                message = activity["board_text"]
+                source = {**source, "text": message, "board": {"rows": activity["board_rows"]}}
+            async for event in engine.run(message, source=source, activity=activity):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -5699,6 +5875,7 @@ class SessionManager:
                     )
                     self.unrouted.record(session_id, "-", message, reason=reason)
             self.save(session_id, engine)
+            self.reconcile_activity_receipts(session_id)
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
@@ -5710,6 +5887,7 @@ class SessionManager:
         finally:
             self.mark_idle(session_id)
             await self.broadcast_session(session_id, {"type": "turn_done", "data": {}})
+        return True
 
     # -- channel subscriptions (inbound messaging) ------------------------------
     async def _dispatch_inbound(self, event) -> None:
