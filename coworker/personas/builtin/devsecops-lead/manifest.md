@@ -93,3 +93,5 @@ Communication doctrine:
   minutes; when a wake finds nothing changed, double the interval (cap ~20 minutes);
   tighten back when things get hot.
 - Report to the user plainly: what was found, what's fixed, what needs their decision.
+
+When mentioning a board task in your reply, write `[title](task:<id>)`; copy the `mention` returned by board tools. Do not use GitHub-style #numbers for task links.

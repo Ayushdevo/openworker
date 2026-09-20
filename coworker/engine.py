@@ -168,6 +168,7 @@ class TurnEngine:
         self.max_iterations = max_iterations
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
+        self._tool_timings: dict[str, dict[str, float]] = {}
         self.audit_sink = audit_sink
         # Returns an ephemeral `<system-context>` block appended to the LAST user message at
         # send-time only (never persisted). We can't reliably inject system messages mid-thread
@@ -328,6 +329,19 @@ class TurnEngine:
             return interrupted
         finally:
             cancel_wait.cancel()
+
+    async def _wait_tool(self, tool_call, coro, interrupted):
+        started, clock = time.time(), time.monotonic()
+        try:
+            return await self._interruptible(coro, interrupted)
+        finally:
+            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
+
+    def _timed_result(self, tool_call, result):
+        message = _tool_result_message(tool_call, result)
+        if tool_call.id in self._tool_timings:
+            message["timing"] = self._tool_timings.pop(tool_call.id)
+        return message
 
     def queue_steering(
         self, text: str, source: Optional[dict[str, Any]] = None
@@ -585,6 +599,7 @@ class TurnEngine:
                     reasoning="".join(streamed_reasoning) or None,
                 )
 
+            model_started, model_clock = time.time(), time.monotonic()
             try:
                 async for chunk in self._astream():
                     if chunk.reasoning_delta:
@@ -653,6 +668,7 @@ class TurnEngine:
                     effort_setting=self.model_settings.get("reasoning_effort"),
                 )
             )
+            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.monotonic() - model_clock) * 1000}
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
@@ -1585,7 +1601,7 @@ class TurnEngine:
                 reason=decision.reason,
                 call_id=tool_call.id,
             )
-            outcome = await self._interruptible(
+            outcome = await self._wait_tool(tool_call,
                 self.approver(
                     PermissionRequest(
                         tool_name=tool_call.name,
@@ -1659,6 +1675,8 @@ class TurnEngine:
             if spec is None:
                 reason = f"unknown tool: {tool_call.name}"
             err_msg = _tool_error_message(tool_call, reason)
+            if tool_call.id in self._tool_timings:
+                err_msg["timing"] = self._tool_timings.pop(tool_call.id)
             origin = self._approval_origins.pop(tool_call.id, None)
             if origin:
                 err_msg["_display"] = {
@@ -1690,10 +1708,13 @@ class TurnEngine:
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
+        started, clock = time.time(), time.monotonic()
         try:
             return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
+        finally:
+            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.monotonic() - clock) * 1000)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         self._step += 1
@@ -1731,7 +1752,7 @@ class TurnEngine:
             step=self._step,
             tool_name=tool_call.name,
         )
-        message = _tool_result_message(tool_call, result)
+        message = self._timed_result(tool_call, result)
         if display:
             message["_display"] = display
         self.messages.append(message)
@@ -1865,13 +1886,13 @@ class TurnEngine:
                 {"items": valid, "note": str(args.get("note", ""))},
             )
             self._audit(tool_call, stage="items_proposed")
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.items_approver(dict(args), tool_call.id),
                 interrupted={"approved": False, "error": "interrupted by user"},
             ) or {"approved": False, "error": "no response"}
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -1912,7 +1933,7 @@ class TurnEngine:
                 {"request": request, "connector": connector, "worker": worker, "reason": reason},
             )
             self._audit(tool_call, stage="connector_requested", reason=reason)
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.connector_requester(dict(args), tool_call.id),
                 interrupted={"approved": False, "error": "interrupted by user"},
             ) or {"approved": False, "error": "no response"}
@@ -1922,7 +1943,7 @@ class TurnEngine:
                     "The user declined. Carry on without it and say plainly what you could not do.",
                 )
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(tool_call, stage="finished", status=status, result=result, result_preview=_preview(result))
         yield Event(
             EventType.TOOL_FINISHED,
@@ -1956,13 +1977,18 @@ class TurnEngine:
                 },
             )
             self._audit(tool_call, stage="team_proposed")
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.team_approver(dict(args), tool_call.id),
                 interrupted={"approved": False, "error": "interrupted by user"},
             ) or {"approved": False, "error": "no response"}
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        message = self._timed_result(tool_call, result)
+        created = None
+        if result.get("approved") and result.get("team_id"):
+            created = {"team_id": result["team_id"], "workers": result.get("workers") or []}
+            message["_display"] = {"team_created": created}
+        self.messages.append(message)
         self._audit(
             tool_call,
             stage="finished",
@@ -1976,6 +2002,7 @@ class TurnEngine:
                 "name": tool_call.name,
                 "status": status,
                 "result_preview": _preview(result),
+                "display": {"team_created": created} if created else {},
             },
         )
 
@@ -2007,7 +2034,7 @@ class TurnEngine:
         else:
             yield Event(EventType.PLAN_PROPOSED, {"plan": plan})
             self._audit(tool_call, stage="plan_proposed")
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.plan_approver(dict(args), tool_call.id),
                 interrupted={"approved": False, "error": "interrupted by user"},
             ) or {
@@ -2029,7 +2056,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2100,7 +2127,7 @@ class TurnEngine:
                 },
             )
             self._audit(tool_call, stage="tool_requested", reason=reason)
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.tool_requester(dict(args), tool_call.id),
                 interrupted={"installed": False, "error": "interrupted by user"},
             ) or {"installed": False, "error": "no response"}
@@ -2126,7 +2153,7 @@ class TurnEngine:
                 )
 
         status = "ok" if result.get("installed") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2172,7 +2199,7 @@ class TurnEngine:
                 stage="directory_requested",
                 reason=str(args.get("reason", "")),
             )
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.directory_requester(dict(args), tool_call.id),
                 interrupted={"granted": False, "error": "interrupted by user"},
             ) or {
@@ -2181,7 +2208,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("granted") else "denied"
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2223,7 +2250,7 @@ class TurnEngine:
             # The asker is mode-aware (attended → live inline prompt; unattended → Inbox), so it
             # owns surfacing the question. The engine just awaits the answer.
             self._audit(tool_call, stage="question_requested", reason=question)
-            result = await self._interruptible(
+            result = await self._wait_tool(tool_call,
                 self.question_asker(dict(args), tool_call.id),
                 interrupted={"answer": "", "error": "interrupted by user"},
             ) or {
@@ -2234,7 +2261,7 @@ class TurnEngine:
         status = "ok" if (result.get("answer") or result.get("answers")) else "denied"
         if status == "ok":
             self._note_ask_replies(result, question)
-        self.messages.append(_tool_result_message(tool_call, result))
+        self.messages.append(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2307,6 +2334,7 @@ class TurnEngine:
         # display-only too: dropped entirely.
         _SIDECARS = (
             "source",
+            "timing",
             "_display",
             "ts",
             "reasoning",

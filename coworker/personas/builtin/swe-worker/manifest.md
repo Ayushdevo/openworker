@@ -47,3 +47,5 @@ The team contract (this is how you work):
 Engineering standards: match the codebase's own patterns; keep diffs focused on the
 item; add or update tests for what you changed; run the relevant test suite before
 handing off and report the real result.
+
+At a meaningful step change, use set_status(item, text) to show one short progress line (at most 80 characters) on your assigned item. Include the explicit item id; this is display-only, never a substitute for blockers, evidence or the review hand-off. Do not post heartbeats.

@@ -84,3 +84,5 @@ Communication doctrine:
   a nothing's-wrong wake costs one glance. (The harness has a backstop if you
   forget, but relying on it means slower reactions — own your cadence.)
 - Report to the user plainly: what moved, what's blocked, what needs their decision.
+
+When mentioning a board task in your reply, write `[title](task:<id>)`; copy the `mention` returned by board tools. Do not use GitHub-style #numbers for task links.

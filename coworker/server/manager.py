@@ -2390,6 +2390,15 @@ class SessionManager:
         self.kick_team_tick()  # the assignee's feed has news
         return {"ok": True, "seq": event["seq"]}
 
+    def team_summary(self, team_id: str) -> dict[str, Any]:
+        from ..teams.summary import make_summary
+        team = self.teams.get(team_id)
+        if team is None:
+            return {"error": "team not found"}
+        if self._board_space(team.lead_session) != team.space:
+            return {"error": "the lead's board binding has changed"}
+        return make_summary(self, team, time.time())
+
     def session_board(self, session_id: str) -> dict[str, Any]:
         """The session's board: items grouped by the workspace-keyed space. Empty
         (space=None) when the workspace has no items — the rail hides itself."""
@@ -2413,6 +2422,11 @@ class SessionManager:
                     if payload.get("comment"):
                         item["blocker"] = self._clamp(payload["comment"], 120)
                     break
+        from ..teams.summary import all_events, waiting_items
+        waits = waiting_items(all_events(self.team_store, space), self.inbox, items)
+        for item in items:
+            if item["id"] in waits:
+                item["waiting"] = waits[item["id"]]
         return {"space": space, "name": Path(space).name, "items": items}
 
     def board_transition(
@@ -3070,7 +3084,7 @@ class SessionManager:
         )
         lines: list[str] = []
         rows: list[dict] = []
-        for event in directs + subs:
+        for event in sorted(directs + subs, key=lambda e: e["seq"]):
             item_id = event.get("item_id")
             payload = event.get("payload") or {}
             item = None
@@ -3135,6 +3149,8 @@ class SessionManager:
                     {
                         **row,
                         "kind": "moved",
+                        "from": payload.get("from"),
+                        "refs": payload.get("refs") or [],
                         "to": to,
                         "note": self._clamp(
                             payload.get("comment") or "", self.DIGEST_CLAMP_UI
@@ -5102,7 +5118,20 @@ class SessionManager:
         if item is None or item.kind != "approval":
             return None
         data = item.data or {}
+        task_fields = {}
+        found = self.teams.for_worker_session(item.session_id)
+        if found:
+            from ..teams.summary import all_events
+            team, _worker = found
+            for event in all_events(self.team_store, team.space):
+                if event["kind"] == WORKER_WAITING and event["payload"].get("prompt_id") == item.id and event.get("item_id") is not None:
+                    try:
+                        task = self.team_store.get_item(team.space, event["item_id"], actor=self._user_actor())
+                        task_fields = {"item_id": task["id"], "item_title": task["title"]}
+                    except TeamsBoardError:
+                        pass
         return {
+            **task_fields,
             "worker": str((arguments or {}).get("worker") or ""),
             "tool": str(data.get("tool") or ""),
             "arguments": data.get("arguments") or {},

@@ -25,8 +25,18 @@ LEAD_VERBS = ("create_item", "list_items", "transition", "comment", "assign", "l
 # self-assignment: on an open-claims board (the default) a worker may pick up an
 # open, unassigned item — the store arbitrates races, the lead supervises by
 # exception (every claim lands in its feed; reassign/cancel revokes).
-WORKER_VERBS = ("create_item", "list_items", "transition", "comment", "claim")
+WORKER_VERBS = ("create_item", "list_items", "transition", "comment", "claim", "set_status")
 JOURNAL_VERBS = ("journal_append", "journal_read")
+
+
+def with_mention(item: dict) -> dict:
+    """A copyable Markdown mention; user-controlled titles cannot break out of the label."""
+    if "id" not in item:
+        return item
+    title = " ".join(str(item.get("title") or "").split())
+    for char in ("\\", "[", "]", "*", "_", "`", "<", ">"):
+        title = title.replace(char, "\\" + char)
+    return {**item, "mention": f"[{title}](task:{item['id']})"}
 
 # Explicit schema: the auto-generator's normalizer strips every `title` key to drop
 # pydantic metadata, which also deletes a PARAMETER named `title` from properties.
@@ -84,7 +94,7 @@ def board_tools(
         before the item can be done; required. `parent` links it under another
         item; `case` names its journal case (children inherit the parent's case
         by default)."""
-        return _call(
+        return with_mention(_call(
             store.create_item,
             space,
             actor,
@@ -93,15 +103,21 @@ def board_tools(
             description=description,
             parent=parent,
             case=case or None,
-        )
+        ))
 
     def list_items(state: str = "", assignee: str = "") -> dict:
         """List work items on the board, optionally filtered by state
         (open/in_progress/blocked/review/done/canceled) or assignee."""
         try:
-            return {"items": store.list_items(space, actor, state=state or None, assignee=assignee or None)}
+            return {"items": [with_mention(i) for i in store.list_items(space, actor, state=state or None, assignee=assignee or None)]}
         except (BoardError, ValueError) as error:
             return {"error": str(error)}
+
+    def set_status(item: int, text: str) -> dict:
+        """Set a one-line progress description (at most 80 characters) on an item
+        currently assigned to you. Explicit item id required. Display only: does
+        not change state, wake the lead, or replace evidence and review."""
+        return _call(store.set_status, space, actor, item, text)
 
     def transition(
         item: int, to: str, comment: str = "", refs: Optional[list] = None

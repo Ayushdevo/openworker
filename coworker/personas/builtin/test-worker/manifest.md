@@ -48,3 +48,5 @@ How you verify:
 
 The team contract also binds you: in_progress when you start, blocked with a comment
 if you can't verify (missing creds, un-runnable app), never mark items done yourself.
+
+At a meaningful step change, use set_status(item, text) to show one short progress line (at most 80 characters) on your assigned item. Include the explicit item id; this is display-only, never a substitute for blockers, evidence or the review hand-off. Do not post heartbeats.

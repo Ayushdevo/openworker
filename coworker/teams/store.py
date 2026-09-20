@@ -62,6 +62,7 @@ ITEM_TRANSITIONED = "item_transitioned"
 ITEM_COMMENTED = "item_commented"
 ITEM_ASSIGNED = "item_assigned"
 ITEM_LINKED = "item_linked"
+ITEM_STATUS = "item_status"
 # §11.6: a manual-mode worker parked on a tool approval — the lead cannot approve it
 # (it holds nothing the human did not grant) but should wait knowingly or reassign.
 WORKER_WAITING = "worker_waiting"
@@ -166,6 +167,11 @@ class TeamStore:
                 name TEXT PRIMARY KEY
             );
             """)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(team_items)")}
+        for column in ("status", "status_ts"):
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE team_items ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        self._conn.commit()
         migrated = self._conn.execute(
             "SELECT 1 FROM team_migrations WHERE name = ?",
             (ATTACHMENT_REFS_MIGRATION,),
@@ -288,9 +294,13 @@ class TeamStore:
         case_id: Optional[str] = None,
         since_seq: int = 0,
         limit: int = 500,
+        exclude_kinds: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         where = ["space = ?", "seq > ?"]
         params: list[Any] = [space, since_seq]
+        if exclude_kinds:
+            where.append(f"kind NOT IN ({','.join('?' * len(exclude_kinds))})")
+            params.extend(exclude_kinds)
         if kinds:
             where.append(f"kind IN ({','.join('?' * len(kinds))})")
             params.extend(kinds)
@@ -340,7 +350,7 @@ class TeamStore:
         assigned to it) or END it (just reassigned away — it hears that, then
         goes quiet). Its own events never appear."""
         key = f"feed:{actor_id}:{space}"
-        events = self.events(space, since_seq=self._cursor(key), limit=limit)
+        events = self.events(space, since_seq=self._cursor(key), limit=limit, exclude_kinds=[ITEM_STATUS])
         with self._lock:
             slice_ids = self._worker_slice(space, actor_id)
         out = []
@@ -763,6 +773,24 @@ class TeamStore:
                 taint=taint,
             )
 
+    def set_status(self, space: str, actor: Actor, item_id: int, text: str) -> dict[str, Any]:
+        """Display-only progress. Never an assignment, transition or wake signal."""
+        self._require(actor, {Role.WORKER}, "set_status")
+        if not isinstance(item_id, int) or isinstance(item_id, bool) or item_id < 1:
+            raise BoardError("item must be an explicit positive integer")
+        if not isinstance(text, str) or len(text) > 80 or len(text.splitlines()) > 1 or "\n" in text or "\r" in text:
+            raise BoardError("status must be one line of at most 80 characters")
+        with self._lock:
+            item = self.get_item(space, item_id, actor=actor)
+            if item["assignee"] != actor.id:
+                raise AuthorityError("set_status requires an item currently assigned to you")
+            if item["state"] in ("done", "canceled"):
+                raise BoardError("cannot update status on a finished item")
+            if item["status"] == text.strip():
+                return item
+            self.append_event(space, ITEM_STATUS, actor, item_id=item_id, payload={"text": text.strip()})
+            return self.get_item(space, item_id, actor=actor)
+
     def assign(
         self, space: str, actor: Actor, item_id: int, assignee: str
     ) -> dict[str, Any]:
@@ -956,7 +984,7 @@ class TeamStore:
                 )
         elif kind == ITEM_TRANSITIONED:
             self._conn.execute(
-                "UPDATE team_items SET state = ?, updated_seq = ?"
+                "UPDATE team_items SET state = ?, updated_seq = ?, status = '', status_ts = ''"
                 " WHERE space = ? AND id = ?",
                 (payload.get("to"), seq, space, item_id),
             )
@@ -968,9 +996,14 @@ class TeamStore:
             )
         elif kind == ITEM_ASSIGNED:
             self._conn.execute(
-                "UPDATE team_items SET assignee = ?, updated_seq = ?"
+                "UPDATE team_items SET assignee = ?, updated_seq = ?, status = '', status_ts = ''"
                 " WHERE space = ? AND id = ?",
                 (payload.get("assignee") or "", seq, space, item_id),
+            )
+        elif kind == ITEM_STATUS:
+            self._conn.execute(
+                "UPDATE team_items SET status = ?, status_ts = ? WHERE space = ? AND id = ?",
+                (payload.get("text") or "", ts, space, item_id),
             )
         elif kind == ITEM_LINKED:
             self._conn.execute(

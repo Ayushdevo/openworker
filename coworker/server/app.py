@@ -839,6 +839,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             comment=str(body.get("comment", "")),
         )
 
+    @app.get("/v1/teams/{team_id}/summary")
+    def team_summary(team_id: str):
+        result = manager.team_summary(team_id)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
+
     @app.get("/v1/teams/{team_id}/chat")
     def team_chat(team_id: str) -> dict[str, Any]:
         return manager.team_chat(team_id)
