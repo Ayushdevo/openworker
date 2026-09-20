@@ -48,6 +48,7 @@ from .tools.toolreq import request_tool_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
+from .sandbox.selection import select as select_sandbox
 from .sandbox.workspace import open_workspace
 from .tools.todo import TodoList
 
@@ -339,7 +340,13 @@ def build_engine(
     # The session's workspace decides where commands run: in this process (`direct`, the
     # default, today's behaviour) or in a tool runner behind a sandbox provider.
     sandbox_workspace = (
-        open_workspace(cwd=ws, roots=root_list or None, session_id=session_id or "", agent=agent.name)
+        open_workspace(
+            cwd=ws,
+            provider=select_sandbox(config.sandbox_provider).provider,
+            roots=root_list or None,
+            session_id=session_id or "",
+            agent=agent.name,
+        )
         if ws is not None
         else None
     )
