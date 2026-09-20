@@ -32,6 +32,7 @@ import { InboxItemCard } from "./InboxItemCard";
 import { ItemDetail } from "./BoardPanel";
 import { taskDot } from "./TaskChip";
 import { Icon } from "./Icon";
+import { Composer } from "./Composer";
 
 export const minutes = (seconds: number) =>
   Math.max(0, Math.round(seconds / 60));
@@ -724,32 +725,39 @@ export function TeamView({
   }));
   const shownItems = summary?.items || fallbackItems;
   const task = shownItems.find((i) => i.id === selected);
-  const knownWorker = sessions.find(
-    (w) =>
-      w.team?.actor === task?.assignee && w.team?.lead_session === sessionId,
-  );
-  const worker =
-    selectedWorker ||
-    summary?.workers.find((w) => w.actor === task?.assignee) ||
-    (knownWorker
-      ? {
-          actor: knownWorker.team!.actor!,
-          role: knownWorker.agent,
-          session_id: knownWorker.session_id,
-          model: knownWorker.model,
-          workspace: knownWorker.workspace,
-          running: knownWorker.liveness === "working",
+  const workers =
+    summary?.workers ||
+    sessions
+      .filter((w) => w.team?.lead_session === sessionId && w.team?.actor)
+      .map(
+        (w): TeamWorker => ({
+          actor: w.team!.actor!,
+          role: w.agent,
+          session_id: w.session_id,
+          model: w.model,
+          workspace: w.workspace,
+          running: w.liveness === "working",
           tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          items: [selected!],
-        }
-      : undefined);
+          usage_partial: true,
+          items: shownItems
+            .filter((i) => i.assignee === w.team!.actor)
+            .map((i) => i.id),
+        }),
+      );
+  const worker = workers.find(
+    (w) => w.session_id === selectedWorker?.session_id,
+  );
   const goBack = () => {
     setSelected(null);
     setSelectedWorker(null);
   };
   const openWorker = (w: TeamWorker) => {
     setSelectedWorker(w);
-    setSelected(w.items[0] ?? null);
+    setSelected(null);
+  };
+  const openTask = (id: number) => {
+    setSelectedWorker(null);
+    setSelected(id);
   };
   return (
     <section
@@ -799,15 +807,24 @@ export function TeamView({
           ×
         </button>
       </header>
-      {selected != null || selectedWorker ? (
-        <TaskConversation
-          key={`${sessionId}:${selected}:${worker?.session_id}`}
+      {selected != null ? (
+        <TaskDetailPane
+          key={`${sessionId}:task:${selected}`}
           task={task}
-          worker={worker}
           leadSession={sessionId}
+          workers={workers}
+          onWorker={openWorker}
+          onRefresh={onRefresh}
+        />
+      ) : worker ? (
+        <WorkerConversation
+          key={worker.session_id}
+          worker={worker}
+          tasks={shownItems.filter((i) => worker.items.includes(i.id))}
+          onTask={openTask}
           machine={
-            sessions.find((s) => s.session_id === worker?.session_id)
-              ?.machine ?? machine
+            sessions.find((s) => s.session_id === worker.session_id)?.machine ??
+            machine
           }
           machineName={machineName}
           onRefresh={onRefresh}
@@ -826,11 +843,7 @@ export function TeamView({
                         {t("teamview.state_" + group)}
                       </h3>
                       {tasks.map((item) => (
-                        <TaskRow
-                          key={item.id}
-                          item={item}
-                          onOpen={setSelected}
-                        />
+                        <TaskRow key={item.id} item={item} onOpen={openTask} />
                       ))}
                     </section>
                   )
@@ -855,7 +868,7 @@ export function TeamView({
                     key={item.id}
                     item={item}
                     machine={machineName}
-                    onOpen={setSelected}
+                    onOpen={openTask}
                     now={summary.generated_at}
                   />
                 ));
@@ -897,39 +910,34 @@ export function TeamView({
   );
 }
 
-function TaskConversation({
+function TaskDetailPane({
   task,
-  worker,
   leadSession,
-  machine,
-  machineName,
+  workers,
+  onWorker,
   onRefresh,
 }: {
   task?: TeamTask;
-  worker?: TeamWorker;
   leadSession: string;
-  machine?: string | null;
-  machineName?: string;
+  workers: TeamWorker[];
+  onWorker: (worker: TeamWorker) => void;
   onRefresh: () => void;
 }) {
   const { t } = useTranslation();
-  const [items, setItems] = useState<Item[]>([]),
-    [stream, setStream] = useState(""),
-    [running, setRunning] = useState(false);
-  const [connected, setConnected] = useState(false),
-    [draft, setDraft] = useState(""),
-    [error, setError] = useState("");
-  const [pending, setPending] = useState<InboxItem[]>([]),
-    [detail, setDetail] = useState<BoardItemDetail | null>(null);
-  const socket = useRef<Session | null>(null);
-  const refreshRef = useRef(onRefresh);
-  refreshRef.current = onRefresh;
+  const [detail, setDetail] = useState<BoardItemDetail | null>(null);
+  const [error, setError] = useState("");
   useEffect(() => {
     let canceled = false;
     if (!task) return;
     getBoardItem(leadSession, task.id)
       .then((d) => {
-        if (!canceled && !("error" in d)) setDetail(d);
+        if (!canceled) {
+          if ("error" in d) setError(t("teamview.load_error"));
+          else {
+            setDetail(d);
+            setError("");
+          }
+        }
       })
       .catch(() => {
         if (!canceled) setError(t("teamview.load_error"));
@@ -938,6 +946,124 @@ function TaskConversation({
       canceled = true;
     };
   }, [leadSession, task?.id, task?.updated, t]);
+  const reloadDetail = async () => {
+    if (!task) return;
+    const d = await getBoardItem(leadSession, task.id);
+    if ("error" in d) throw new Error(d.error);
+    setDetail(d);
+    setError("");
+    onRefresh();
+  };
+  const contributors = new Set([
+    detail?.assignee,
+    ...(detail?.timeline || []).flatMap((event) => [
+      event.actor,
+      event.assignee,
+    ]),
+  ]);
+  const relatedWorkers = workers.filter((w) => contributors.has(w.actor));
+
+  return (
+    <div
+      className="team-pane-body team-task-detail"
+      data-testid="team-task-detail"
+    >
+      <h2>{task?.title || t("teamview.task_unavailable")}</h2>
+      {task && task.elapsed_s > 0 && (
+        <>
+          <MetricBar
+            kind="time"
+            values={task.timing}
+            partial={task.timing_partial}
+          />
+          <MetricBar
+            kind="tokens"
+            values={task.tokens}
+            partial={task.usage_partial}
+          />
+        </>
+      )}
+      {detail && (
+        <ItemDetail
+          hideTitle
+          detail={detail}
+          onOpenWorker={
+            workers.some((w) => w.actor === detail.assignee)
+              ? (actor) => {
+                  const w = workers.find((w) => w.actor === actor);
+                  if (w) onWorker(w);
+                }
+              : undefined
+          }
+          onTransition={(id, to, comment) => {
+            void boardTransition(leadSession, id, to, comment)
+              .then((result) => {
+                if ("error" in result) throw new Error(result.error);
+                return reloadDetail();
+              })
+              .catch(() => setError(t("teamview.action_error")));
+          }}
+          onAddNote={async (id, body) => {
+            try {
+              const result = await boardComment(leadSession, id, body);
+              if (result.error) throw new Error(result.error);
+              await reloadDetail();
+            } catch (e) {
+              setError(t("teamview.action_error"));
+              throw e;
+            }
+          }}
+          loadAttachment={(stored) => fetchBoardAttachment(leadSession, stored)}
+        />
+      )}
+      {relatedWorkers.length > 0 && (
+        <section className="team-related-workers">
+          <h3>{t("teamview.related_conversations")}</h3>
+          {relatedWorkers.map((w) => (
+            <button
+              key={w.session_id}
+              className="task-chip"
+              onClick={() => onWorker(w)}
+            >
+              {w.actor} ↗
+            </button>
+          ))}
+        </section>
+      )}
+      {error && (
+        <p role="alert" className="text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WorkerConversation({
+  worker,
+  tasks,
+  onTask,
+  machine,
+  machineName,
+  onRefresh,
+}: {
+  worker: TeamWorker;
+  tasks: TeamTask[];
+  onTask: (id: number) => void;
+  machine?: string | null;
+  machineName?: string;
+  onRefresh: () => void;
+}) {
+  const { t } = useTranslation();
+  const [items, setItems] = useState<Item[]>([]);
+  const [stream, setStream] = useState("");
+  const [running, setRunning] = useState(worker.running);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState<InboxItem[]>([]);
+  const socket = useRef<Session | null>(null);
+  const refreshRef = useRef(onRefresh);
+  refreshRef.current = onRefresh;
   useEffect(() => {
     if (!worker) return;
     let canceled = false,
@@ -1028,140 +1154,96 @@ function TaskConversation({
       socket.current = null;
     };
   }, [worker?.session_id, machine, t]);
-  const reloadDetail = async () => {
-    if (!task) return;
-    const d = await getBoardItem(leadSession, task.id);
-    if ("error" in d) throw new Error(d.error);
-    setDetail(d);
-    onRefresh();
-  };
+
   return (
     <>
-      <div className="team-worker-header">
-        <h2>
-          {task?.title || worker?.actor || t("teamview.task_unavailable")}
-        </h2>
+      <div className="team-worker-header" data-testid="team-worker-header">
+        <h2>{worker.actor}</h2>
         <p className="team-totals">
-          {worker?.actor} {worker && "· " + worker.role} ·{" "}
-          {machineName || t("teamview.this_machine")}
+          {worker.role} · {machineName || t("teamview.this_machine")}
         </p>
-        {task && task.elapsed_s > 0 && (
-          <>
-            <MetricBar
-              kind="time"
-              values={task.timing}
-              partial={task.timing_partial}
-            />
-            <MetricBar
-              kind="tokens"
-              values={task.tokens}
-              partial={task.usage_partial}
-            />
-          </>
-        )}
-      </div>
-      <div className="team-pane-body team-worker-transcript">
-        {detail && (
-          <details className="team-task-detail">
-            <summary>{t("teamview.task_details")}</summary>
-            <ItemDetail
-              detail={detail}
-              onTransition={(id, to, comment) => {
-                void boardTransition(leadSession, id, to, comment)
-                  .then((result) => {
-                    if ("error" in result) throw new Error(result.error);
-                    return reloadDetail();
-                  })
-                  .catch(() => setError(t("teamview.action_error")));
-              }}
-              onAddNote={async (id, body) => {
-                try {
-                  const result = await boardComment(leadSession, id, body);
-                  if (result.error) throw new Error(result.error);
-                  await reloadDetail();
-                } catch (e) {
-                  setError(t("teamview.action_error"));
-                  throw e;
-                }
-              }}
-              loadAttachment={(stored) =>
-                fetchBoardAttachment(leadSession, stored)
-              }
-            />
+        <MetricBar
+          kind="tokens"
+          values={worker.tokens}
+          partial={worker.usage_partial}
+        />
+        {tasks.length > 0 && (
+          <details className="team-worker-task-links">
+            <summary>
+              {t("teamview.linked_tasks", { count: tasks.length })}
+            </summary>
+            {tasks.map((task) => (
+              <button
+                key={task.id}
+                className="task-chip"
+                onClick={() => onTask(task.id)}
+              >
+                <span className={taskDot(task.state, !!task.waiting)} />
+                {task.title}
+              </button>
+            ))}
           </details>
         )}
-        {worker ? (
-          <>
-            <Transcript
-              items={items}
-              running={running}
-              onApprove={(d) => socket.current?.approve(d)}
-            />
-            {stream && <Markdown text={stream} />}
-          </>
-        ) : (
-          <p>{t("teamview.unassigned")}</p>
-        )}
+      </div>
+      <div
+        className="team-pane-body team-worker-transcript"
+        data-testid="team-worker-transcript"
+      >
+        <Transcript
+          items={items}
+          running={running}
+          onApprove={(d) => socket.current?.approve(d)}
+        />
+        {stream && <Markdown text={stream} />}
         {error && (
           <p role="alert" className="text-danger">
             {error}
           </p>
         )}
       </div>
-      {worker && (
-        <div className="team-worker-composer">
-          {pending[0] && (
-            <InboxItemCard
-              item={pending[0]}
-              compact
-              onResolve={async (id, answer) => {
-                try {
-                  await resolveInboxItem(id, answer);
-                  setPending((p) => p.filter((i) => i.id !== id));
-                  onRefresh();
-                } catch {
-                  setError(t("teamview.action_error"));
-                }
-              }}
-            />
-          )}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!connected || !draft.trim()) return;
-              socket.current?.userMessage(
-                draft.trim(),
-                undefined,
-                worker.model,
-              );
-              setItems((x) => [...x, { kind: "user", text: draft.trim() }]);
-              setDraft("");
-            }}
-          >
-            <textarea
-              aria-label={t("teamview.message_worker", {
-                worker: worker.actor,
-              })}
-              placeholder={t("teamview.message_worker", {
-                worker: worker.actor,
-              })}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              disabled={!connected}
-            />
-            <button
-              type="submit"
-              className="btn primary"
-              disabled={!connected || !draft.trim()}
-            >
-              {t("teamview.send")}
-            </button>
-          </form>
-          {!connected && (
-            <p className="team-totals">{t("teamview.worker_offline")}</p>
-          )}
-        </div>
-      )}
+      <div className="team-worker-composer">
+        <Composer
+          compact
+          followsLead
+          mode="interactive"
+          model={worker.model}
+          models={[worker.model]}
+          running={running}
+          connected={connected}
+          sessionId={worker.session_id}
+          workspace={worker.workspace}
+          resetKey={worker.session_id}
+          placeholder={t("teamview.message_worker", { worker: worker.actor })}
+          onModeChange={() => {}}
+          onModelChange={() => {}}
+          onInterrupt={() => socket.current?.interrupt()}
+          onSend={(text, attachments, skill) => {
+            if (!connected) return;
+            socket.current?.userMessage(text, attachments, worker.model, skill);
+            setItems((x) => [...x, { kind: "user", text, attachments }]);
+          }}
+          approvalSlot={
+            pending[0] && (
+              <InboxItemCard
+                item={pending[0]}
+                compact
+                onResolve={async (id, answer) => {
+                  try {
+                    await resolveInboxItem(id, answer);
+                    setPending((p) => p.filter((i) => i.id !== id));
+                    onRefresh();
+                  } catch {
+                    setError(t("teamview.action_error"));
+                  }
+                }}
+              />
+            )
+          }
+        />
+        {!connected && (
+          <p className="team-totals">{t("teamview.worker_offline")}</p>
+        )}
+      </div>
     </>
   );
 }

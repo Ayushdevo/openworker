@@ -78,6 +78,9 @@ const mergeAttachments = (cur: Attachment[], add: Attachment[]): Attachment[] =>
 };
 
 interface Props {
+  // Worker-pane variant: retain the shared input, attachments and send/stop;
+  // omit session rebinding, model changes and global native dictation controls.
+  compact?: boolean;
   mode: string;
   model: string;
   models?: string[];
@@ -194,7 +197,7 @@ export function Composer(props: Props) {
   // UX-044: which "This session" submenu is open (bindings live server-side).
   const [bindMenu, setBindMenu] = useState<"memory" | "board" | null>(null);
   // Bindings need a session and a workspace surface (Chat has neither).
-  const sessionRows = Boolean(props.sessionId && props.workspace !== undefined);
+  const sessionRows = !props.compact && Boolean(props.sessionId && props.workspace !== undefined);
   const bindRow = (icon: "book" | "table", label: string, kind: "memory" | "board") => (
     <button
       className={
@@ -271,7 +274,7 @@ export function Composer(props: Props) {
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
   useEffect(() => {
-    if (!isTauri()) return;
+    if (props.compact || !isTauri()) return;
     const refresh = (event?: Event) => {
       const supplied = (event as CustomEvent<DictationStatus> | undefined)?.detail;
       if (supplied) {
@@ -398,6 +401,7 @@ export function Composer(props: Props) {
     const skill = prefixIntact ? pendingSkill!.name : undefined;
     const body = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
+      !props.connected ||
       (!body && attachments.length === 0 && !skill) ||
       (props.running && !props.gateOpen) ||
       dictation?.recording ||
@@ -631,6 +635,7 @@ export function Composer(props: Props) {
           </div>
         )}
         <textarea
+          aria-label={props.placeholder}
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-body"
           placeholder={
@@ -753,7 +758,7 @@ export function Composer(props: Props) {
           {/* model — a quiet chip, now for the session's whole life (§17 rev 2026-07-22:
               mid-session switching shipped, so the picker stays actionable; the topbar
               subtitle still states the current model). */}
-          {!dictation?.recording && (needsModel ? (
+          {!props.compact && !dictation?.recording && (needsModel ? (
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
@@ -795,7 +800,7 @@ export function Composer(props: Props) {
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
-          {isTauri() && (
+          {!props.compact && isTauri() && (
             <button
               className={
                 iconBtn +

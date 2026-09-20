@@ -126,12 +126,14 @@ export function ItemDetail({
   onAddNote,
   loadAttachment,
   onOpenWorker,
+  hideTitle = false,
 }: {
   detail: BoardItemDetail;
   onTransition?: (item: number, to: string, comment?: string) => void;
   onAddNote?: (item: number, body: string) => Promise<void>;
   loadAttachment?: (stored: string) => Promise<string | null>;
   onOpenWorker?: (actor: string) => void;
+  hideTitle?: boolean;
 }) {
   const { t } = useTranslation();
   // "Request changes…" discloses a comment box; the verdict rides the transition.
@@ -143,9 +145,9 @@ export function ItemDetail({
   }, [detail.id]);
   return (
     <div className="board-detail" data-testid="board-detail">
-      <div className="board-detail-title">
+      {!hideTitle && <div className="board-detail-title">
         <span className="board-detail-id">#{detail.id}</span> {detail.title}
-      </div>
+      </div>}
       <div className="board-detail-meta">
         <span className={"board-detail-st st-" + detail.state}>
           {stateLabel(t, detail.state)}

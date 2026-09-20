@@ -13,7 +13,6 @@ async function openTask(page: import("@playwright/test").Page, id: number) {
     .getByTestId("team-view")
     .getByTestId("team-task-" + id)
     .click();
-  await page.getByText("Task details and evidence", { exact: true }).click();
   await expect(page.getByTestId("board-detail")).toBeVisible();
 }
 test("plain sessions carry zero board chrome", async ({ page }) => {
@@ -52,7 +51,6 @@ test("review verdict and remove still round-trip from task detail", async ({
     .getByRole("button", { name: "← Team" })
     .click();
   await page.getByTestId("team-task-1").click();
-  await page.getByText("Task details and evidence", { exact: true }).click();
   await page
     .getByTestId("board-detail")
     .getByRole("button", { name: "Remove" })

@@ -2324,6 +2324,8 @@
     "action_error": "操作未能完成，尚未确认你的更改。",
     "send_error": "消息未被接受。",
     "message_worker": "向 {{worker}} 发送消息…",
+    "linked_tasks": "已分配的任务（{{count}}）",
+    "related_conversations": "相关协作者会话",
     "send": "发送",
     "worker_offline": "成员连接不可用，重新连接之前无法发送消息。"
   }

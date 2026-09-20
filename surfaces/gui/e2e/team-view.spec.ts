@@ -22,6 +22,25 @@ test("team icon, task chip, worker message and all three tabs work together", as
   await expect(pane.getByText("1 task is waiting on you.")).toBeVisible();
   await page.screenshot({ path: "test-results/team-view-work.png" });
   await pane.getByTestId("team-task-1").click();
+  await expect(pane.getByTestId("board-detail")).toBeVisible();
+  await expect(pane.getByTestId("team-worker-transcript")).toHaveCount(0);
+  await expect(pane.locator(".composer")).toHaveCount(0);
+  await expect(
+    pane.getByText(/The regression covers partial refunds/),
+  ).toHaveCount(0);
+  await page.screenshot({ path: "test-results/team-view-task.png" });
+  await pane.getByTestId("board-open-worker").click();
+  await expect(
+    pane.getByRole("heading", { name: "sam", exact: true }),
+  ).toBeVisible();
+  await expect(pane.getByTestId("board-detail")).toHaveCount(0);
+  await expect(
+    pane.getByText(
+      "Check the invoice refund behavior against the approved criteria.",
+    ),
+  ).toHaveCount(0);
+  await expect(pane.locator(".composer")).toBeVisible();
+  await expect(pane.getByTestId("mode-follows-lead")).toBeVisible();
   await expect(
     pane.getByText(/The regression covers partial refunds/),
   ).toBeVisible();
@@ -40,6 +59,18 @@ test("team icon, task chip, worker message and all three tabs work together", as
   await pane.getByRole("button", { name: "← Team" }).click();
   await pane.getByRole("tab", { name: "Workers" }).click();
   await expect(pane.getByTestId("team-worker-sam")).toBeVisible();
+  await pane.getByTestId("team-worker-sam").click();
+  await expect(
+    pane.getByRole("heading", { name: "sam", exact: true }),
+  ).toBeVisible();
+  await expect(pane.getByTestId("board-detail")).toHaveCount(0);
+  await pane.getByText("Assigned tasks (1)", { exact: true }).click();
+  await pane
+    .getByRole("button", { name: "Fix refund rounding", exact: true })
+    .click();
+  await expect(pane.getByTestId("board-detail")).toBeVisible();
+  await expect(pane.getByTestId("team-worker-transcript")).toHaveCount(0);
+  await pane.getByRole("button", { name: "← Team" }).click();
   await pane.getByRole("tab", { name: "Stats" }).click();
   await pane.getByRole("button", { name: "Show tokens over time" }).click();
   await expect(pane.getByRole("img")).toBeVisible();

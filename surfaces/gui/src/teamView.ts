@@ -32,6 +32,7 @@ export interface TeamTask extends BoardItem {
   usage_partial?: boolean;
 }
 export interface TeamWorker {
+  usage_partial?: boolean;
   actor: string;
   role: string;
   session_id: string;

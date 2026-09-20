@@ -2364,6 +2364,8 @@
     "action_error": "The action could not be completed. Your work has not been confirmed.",
     "send_error": "The message was not accepted.",
     "message_worker": "Message {{worker}}…",
+    "linked_tasks": "Assigned tasks ({{count}})",
+    "related_conversations": "Related worker conversations",
     "send": "Send",
     "worker_offline": "Worker connection unavailable. Messages are disabled until reconnected."
   }

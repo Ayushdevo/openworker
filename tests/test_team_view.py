@@ -308,6 +308,9 @@ def test_call_after_review_is_not_attributed_to_the_previous_item():
     assert result["items"][0]["timing"] is None
     assert sum(result["items"][0]["tokens"].values()) == 0
     assert result["totals"]["tokens"] == 100
+    # Worker accounting covers the session, not whichever task the UI opens.
+    assert sum(result["workers"][0]["tokens"].values()) == 100
+    assert result["workers"][0]["usage_partial"] is False
 
 
 def test_chart_bucketing_preserves_all_tokens_by_role():

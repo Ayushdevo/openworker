@@ -266,6 +266,10 @@ def make_summary(manager, team, now):
                 "workspace": record.workspace if record else "",
                 "running": manager.is_running(sid),
                 "tokens": total,
+                "usage_partial": any(
+                    m.get("role") == "assistant" and not m.get("usage")
+                    for m in messages
+                ),
                 "step": step,
                 "items": [i["id"] for i in items if i["assignee"] == actor],
             }
