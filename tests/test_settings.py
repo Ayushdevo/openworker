@@ -174,3 +174,42 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+def test_ollama_models_support_openai_compatible_servers(tmp_path, monkeypatch):
+    """Local OpenAI-compatible servers expose model ids through /v1/models."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    assert manager.set_provider(
+        "ollama", {"base_url": "http://127.0.0.1:8080/v1"}
+    )["ok"]
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, timeout):
+        if url.endswith("/api/tags"):
+            return Response(404, {})
+        assert url == "http://127.0.0.1:8080/v1/models"
+        return Response(
+            200,
+            {"data": [{"id": "qwen3:8b"}, {"id": "org/custom-model"}]},
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    assert manager._ollama_alive() is True
+    assert manager._ollama_models() == [
+        "ollama:qwen3:8b",
+        "ollama:org/custom-model",
+    ]
+

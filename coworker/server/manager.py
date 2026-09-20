@@ -3882,50 +3882,71 @@ class SessionManager:
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
 
+    def _ollama_base_url(self) -> str:
+        """Return the configured server root, accepting either a root or /v1 URL."""
+        profile = self.secrets.get("provider:ollama") or {}
+        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
+        return base[: -len("/v1")] if base.endswith("/v1") else base
+
     def _ollama_alive(self) -> bool:
-        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
-        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
-        entries render only when an Ollama actually answers, so a machine with no Ollama
-        never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
+        """Best-effort local-model liveness, cached 30s (get_settings runs on every GUI
+        fetch — no 2s probe inline). Keyless is not the same as PRESENT: ollama:* picker
+        entries render only while the configured server answers either its native Ollama
+        API or its OpenAI-compatible API."""
         import time
 
         now = time.monotonic()
         cached = getattr(self, "_ollama_alive_cache", None)
         if cached and now - cached[0] < 30:
             return cached[1]
-        profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
+        base = self._ollama_base_url()
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            alive = any(
+                httpx.get(url, timeout=0.8).status_code == 200
+                for url in (base + "/api/tags", base + "/v1/models")
+            )
         except Exception:
             alive = False
         self._ollama_alive_cache = (now, alive)
         return alive
 
     def _ollama_models(self) -> list[str]:
-        """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
-        if not profile:
+        """Return model ids from either native Ollama or an OpenAI-compatible local server.
+
+        Ollama exposes /api/tags while llama.cpp, vLLM, and similar servers expose
+        /v1/models. Both are normalized to the ollama:<id> picker namespace.
+        Empty or malformed responses remain best-effort and never raise.
+        """
+        if not self.secrets.get("provider:ollama"):
             return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
+        base = self._ollama_base_url()
         try:
             import httpx
 
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
-            return [
-                f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
-            ]
+            native = httpx.get(base + "/api/tags", timeout=2.0)
+            if native.status_code == 200:
+                data = native.json()
+                models = [
+                    f"ollama:{m['name']}"
+                    for m in data.get("models", [])
+                    if isinstance(m, dict) and m.get("name")
+                ]
+                if models:
+                    return models
+
+            compat = httpx.get(base + "/v1/models", timeout=2.0)
+            if compat.status_code == 200:
+                data = compat.json()
+                return [
+                    f"ollama:{m['id']}"
+                    for m in data.get("data", [])
+                    if isinstance(m, dict) and m.get("id")
+                ]
         except Exception:
-            return []
+            pass
+        return []
 
     def model_selectable(self, model: str) -> bool:
         """Can this machine run `model` right now? Its provider has a key — or, for the
