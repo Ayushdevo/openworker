@@ -89,6 +89,29 @@ describe("team update lines", () => {
       ]),
     ).toHaveLength(2);
   });
+  it("folds routine narration and trailing steps but preserves the final answer", () => {
+    const narration: Item = { kind: "assistant", text: "I will check the board." };
+    const answer: Item = { kind: "assistant", text: "The release is ready." };
+    const result = foldTeamUpdates([wake, narration, tool, wake, tool, answer]);
+    expect(result).toHaveLength(2);
+    expect(result[0].sources).toHaveLength(2);
+    expect(result[0].steps).toEqual([narration, tool, tool]);
+    expect(result[1].item).toBe(answer);
+  });
+  it("does not hide a verdict before a final board transition or a pending approval", () => {
+    const answer: Item = { kind: "assistant", text: "The tests pass. Accepted." };
+    const transition: Item = { ...tool, name: "transition", args: { to: "done" } };
+    expect(foldTeamUpdates([wake, answer, transition])[1].item).toBe(answer);
+    const approval: Item = { kind: "approval", name: "run_shell", args: {}, reason: "Review" };
+    expect(foldTeamUpdates([wake, tool, approval, wake])).toHaveLength(3);
+  });
+  it("retains a typed timer reminder when expanded, including on replay", () => {
+    const timer = { ...source, text: "Check the verification result", board: { rows: [], check_in: true } };
+    render(<TeamUpdateLine sources={[timer]} />);
+    expect(screen.getByTestId("team-update").textContent).toContain(timer.text);
+    const replay = itemsFromMessages([{ role: "user", content: timer.text, source: timer }]);
+    expect(foldTeamUpdates([...replay, tool, wake])[0].sources).toHaveLength(2);
+  });
   it("renders a quiet disclosure and no worker note", () => {
     render(
       <TeamUpdateLine

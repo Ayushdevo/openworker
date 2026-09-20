@@ -85,6 +85,7 @@ interface Props {
   teamUsage?: SessionUsage;
   onOpenTeamChat?: () => void;
   onOpenWorker?: (s: SessionInfo) => void;
+  onOpenTeamView?: () => void;
   // Bumped when a [.](board:) chip in the transcript is clicked — expands the Board section.
   openBoardKey?: number;
 }
@@ -116,6 +117,7 @@ export function RightRail({
   teamUsage,
   onOpenTeamChat,
   onOpenWorker,
+  onOpenTeamView,
   openBoardKey = 0,
 }: Props) {
   const { t } = useTranslation();
@@ -299,13 +301,16 @@ export function RightRail({
               count={String(teamMembers.length)}
             >
               <div className="rail-team" data-testid="team-panel">
+                {onOpenTeamView && <button className="rail-team-row" data-testid="rail-open-team-view" onClick={onOpenTeamView}>
+                  <Icon name="panelOpen" size={13} /> {t("teamview.open_view")}
+                </button>}
                 {teamMembers.map((w) => (
                   <button
                     className="rail-team-row"
                     key={w.session_id}
                     data-testid={`team-row-${w.team?.actor || w.session_id}`}
                     onClick={() => onOpenWorker?.(w)}
-                    title={t("rail.team_open_session", { name: w.team?.actor || t("rail.team_worker") })}
+                    title={t("teamview.open_worker_pane", { name: w.team?.actor || t("rail.team_worker") })}
                   >
                     <span className={"team-dot " + (w.team?.status || "idle")} />
                     <span className="rail-team-name">{w.team?.actor || w.agent}</span>
@@ -320,6 +325,7 @@ export function RightRail({
                     {teamChatUnread > 0 && <span className="team-chat-badge">{teamChatUnread}</span>}
                   </button>
                 )}
+                {!teamChatEnabled && <p className="team-totals" data-testid="team-chat-off">{t("teamview.chat_off")}</p>}
                 {teamUsage && totalTokens(teamUsage) > 0 && (
                   /* Tokens for the whole tree (lead + workers), by model. Counts only —
                      no dollars (owner ruling, spec §5). */

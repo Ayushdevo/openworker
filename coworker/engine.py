@@ -224,6 +224,9 @@ class TurnEngine:
         # the owner-hit 2026-08-24 was a 2-denial cumulative trip silently downgrading a
         # long agentic turn to hand-approval for everything after one over-strict pair.
         self.reviewer: Optional[Any] = None
+        self.reviewer_enabled = True  # standalone injected reviewers; manager supplies live flag
+        self.reviewer_settings_epoch = 0
+        self.reviewer_settings_key = None
         self._reviewer_denials = 0
         self._reviewer_verdicts: dict[str, Any] = {}
         # (c) How each consequential call got cleared, keyed by tool_call id:
@@ -1166,6 +1169,7 @@ class TurnEngine:
 
         return (
             self.reviewer is not None
+            and self.reviewer_enabled
             and self.permissions.mode is Mode.AUTO_APPROVE
             and self.is_attended is not None
             and self.is_attended()
@@ -1265,9 +1269,11 @@ class TurnEngine:
         if not pending:
             return
         request, history = self._user_history()
+        consulted_reviewer = self.reviewer
+        settings_epoch = self.reviewer_settings_epoch
         verdicts = await asyncio.gather(
             *[
-                self.reviewer.review(
+                consulted_reviewer.review(
                     request=request,
                     history=history,
                     tool_name=tc.name,
@@ -1278,6 +1284,10 @@ class TurnEngine:
             ]
         )
         for tc, verdict in zip(pending, verdicts):
+            if (self.reviewer is not consulted_reviewer
+                    or self.reviewer_settings_epoch != settings_epoch
+                    or not self._reviewer_active()):
+                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
             self._reviewer_verdicts[tc.id] = verdict
 
     async def _consult_reviewer(self, tool_call: ToolCall) -> Any:
@@ -1492,7 +1502,13 @@ class TurnEngine:
             # configs, unscopable writes) skip the reviewer entirely: their floor is that
             # a PERSON sees them, and a verdict here would be that floor's bypass.
             consulted_live = True
+            consulted_reviewer = self.reviewer
+            settings_epoch = self.reviewer_settings_epoch
             verdict = await self._consult_reviewer(tool_call)
+            if (self.reviewer is not consulted_reviewer
+                    or self.reviewer_settings_epoch != settings_epoch
+                    or not self._reviewer_active()):
+                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
             self._audit(
                 tool_call,
                 stage="reviewer_verdict",

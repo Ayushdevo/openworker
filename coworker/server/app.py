@@ -3087,6 +3087,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                             # records it, Recents doesn't reorder. The next real turn's
                             # checkpoint save bumps recency as usual.
                             manager.save(session_id, engine, touch=False)
+                            manager.sync_cached_reviewers()
                             await manager.broadcast_session(
                                 session_id,
                                 {"type": "mode_notice", "data": notice_data},

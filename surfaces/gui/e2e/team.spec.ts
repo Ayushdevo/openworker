@@ -203,9 +203,11 @@ test("approval creates the team; members live in the drawer, RECENT keeps one en
   await expect(panel.getByTestId("team-row-webb")).toContainText("idle");
   await expect(panel.getByTestId("team-row-checks")).toContainText("#4 blocked");
 
-  // A member row is the escape hatch — clicking opens that worker's session, where
-  // the drawer is a plain worker drawer again (Progress back, no Team panel).
+  // Worker inspection keeps the lead alongside; full navigation is explicit.
   await panel.getByTestId("team-row-nia").click();
+  await expect(page.getByTestId("team-view")).toBeVisible();
+  await expect(page.getByTestId("session-title")).toHaveText("Build the statements page");
+  await page.getByRole("button", { name: "Open full session" }).click();
   await expect(page.getByTestId("rail-toggle-progress")).toBeVisible();
   await expect(page.getByTestId("rail-toggle-team")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to lead" }).click();

@@ -1081,6 +1081,7 @@ class SessionManager:
         lead hears about it on the board. Read at every engine use, never copied."""
         lead_mode = self.lead_mode_for(session_id)
         if lead_mode is None:
+            self.sync_reviewer(engine)
             # Not a worker: a configuration-spawned auto-approve session still counts as
             # attended for the reviewer (§11.5) — unless a live client already decides.
             if engine.is_attended is None and self.reviewer_opted(session_id):
@@ -1088,11 +1089,39 @@ class SessionManager:
             return
         mode = self._mode_value(lead_mode)
         if mode is None:
+            self.sync_reviewer(engine)
             return
         if mode in (Mode.DISCUSS, Mode.PLAN):
             mode = Mode.INTERACTIVE  # read-only leads still let their workers work, with approval
         engine.permissions.mode = mode
+        self.sync_reviewer(engine)
         engine.is_attended = lambda: self._mode_value(self.lead_mode_for(session_id) or "") is Mode.AUTO_APPROVE
+
+    def sync_reviewer(self, engine: TurnEngine) -> None:
+        """Hot-apply feature availability without rebuilding a running engine.
+
+        Does not resolve parked prompts or reset the per-turn denial guard.
+        """
+        live, shadow = self.auto_approve(), self.auto_approve_shadow()
+        key = (live, shadow, engine.permissions.mode)
+        if engine.reviewer_settings_key != key:
+            engine.reviewer_settings_epoch += 1
+            engine.reviewer_settings_key = key
+            engine._reviewer_verdicts.clear()
+        engine.reviewer_enabled = live
+        engine.reviewer_shadow = shadow
+        if not live and not shadow:
+            engine.reviewer = None
+        elif engine.reviewer is None:
+            from ..reviewer import Reviewer
+            engine.reviewer = Reviewer(
+                provider=engine.provider, model=engine.model,
+                known_world=engine.session_facts.world.render() if engine.session_facts else "",
+            )
+
+    def sync_cached_reviewers(self) -> None:
+        for sid, engine in list(self._engines.items()):
+            self.sync_worker_mode(sid, engine)
 
     def decide_worker_call(self, lead_session_id: str, worker: str, call_id: str, decision: str, note: str = "") -> dict[str, Any]:
         """The lead's `decide_worker_call` (spec §11.6): resolve one of ITS workers'
@@ -4462,6 +4491,7 @@ class SessionManager:
     def set_auto_approve(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve"] = bool(on)
         self._save_prefs()
+        self.sync_cached_reviewers()
         return {
             "ok": True,
             "auto_approve": self.auto_approve(),
@@ -4471,6 +4501,7 @@ class SessionManager:
     def set_auto_approve_shadow(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve_shadow"] = bool(on)
         self._save_prefs()
+        self.sync_cached_reviewers()
         return {
             "ok": True,
             "auto_approve": self.auto_approve(),
@@ -5863,6 +5894,13 @@ class SessionManager:
             if board_delivery and activity["board_text"]:
                 message = activity["board_text"]
                 source = {**source, "text": message, "board": {"rows": activity["board_rows"]}}
+            elif wake is not None and wake.kind == "timer":
+                team = self.teams.for_lead_session(session_id)
+                if team is not None:
+                    # Display-only tagging: keep timer receipt and cancellation
+                    # semantics intact while grouping check-ins in the transcript.
+                    source = self._board_source(team, message, rows=activity["board_rows"])
+                    source["board"]["check_in"] = True
             async for event in engine.run(message, source=source, activity=activity):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.

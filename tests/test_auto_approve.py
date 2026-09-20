@@ -560,6 +560,37 @@ def test_reviewer_allow_runs_without_a_card(tmp_path):
     assert verdict_rows[0]["status"] == "allow"
 
 
+@pytest.mark.parametrize("preconsult", [True, False])
+@pytest.mark.parametrize("change", ["disable", "detach", "manual", "off-on"])
+def test_settings_change_during_review_cannot_apply_stale_allow(tmp_path, change, preconsult):
+    engine, rows, approvals = _engine(
+        tmp_path,
+        [_tool_turn(("run_shell", {"command": "pytest -q"})), AssistantTurn(text="done", finish_reason="stop")],
+    )
+
+    class ChangingReviewer:
+        async def review(self, **kwargs):
+            if change == "disable":
+                engine.reviewer_enabled = False
+            elif change == "detach":
+                engine.reviewer = None
+            elif change == "manual":
+                engine.permissions.mode = Mode.INTERACTIVE
+            else:
+                engine.reviewer_settings_epoch += 2
+            return reviewer_mod.Verdict("allow", "an obsolete verdict")
+
+    engine.reviewer = ChangingReviewer()
+    if not preconsult:
+        async def skip_preconsult(calls):
+            pass
+        engine._preconsult_reviewer = skip_preconsult
+    events = _run(engine)
+    assert approvals == ["run_shell"]
+    assert any(e.type == EventType.PERMISSION_REQUIRED for e in events)
+    assert not any(r.get("stage") == "reviewer_verdict" and r.get("status") == "allow" for r in rows)
+
+
 def test_reviewer_deny_blocks_with_terse_agent_message(tmp_path):
     engine, rows, approvals = _engine(
         tmp_path,

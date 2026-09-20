@@ -253,7 +253,7 @@
     "team_open_session": "Open {{name}}'s session",
     "team_worker": "worker",
     "team_sleeping": "sleeping",
-    "team_open": "open ↗",
+    "team_open": "View",
     "team_chat": "team chat",
     "back_to": "Back to {{name}}",
     "crumb_files": "Files",
@@ -2369,6 +2369,10 @@
     "linked_tasks": "Assigned tasks ({{count}})",
     "related_conversations": "Related worker conversations",
     "send": "Send",
-    "worker_offline": "Worker connection unavailable. Messages are disabled until reconnected."
+    "worker_offline": "Worker connection unavailable. Messages are disabled until reconnected.",
+    "open_view": "Open team view",
+    "open_worker_pane": "View {{name}} beside the lead",
+    "full_session": "Open full session",
+    "chat_off": "Team chat is off for this team"
   }
 }

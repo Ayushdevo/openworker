@@ -2222,14 +2222,14 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .team-task-row .board-dot.work,.task-chip .board-dot.work { background:var(--accent); }
 .team-task-row .board-dot.blocked,.task-chip .board-dot.blocked { background:#cc941f; }
 
-.team-icon-row { height:24px; margin-bottom:6px; position:relative; z-index:15; }
+.team-icon-row { height:24px; margin-bottom:6px; padding-left:15px; position:relative; z-index:15; }
 .team-icon-button { display:flex; gap:5px; align-items:center; height:24px; border:0; background:none; color:var(--muted); cursor:pointer; padding:0; }
 .team-presence { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
 .team-presence.working { background:var(--accent); animation:team-pulse 2s ease-out infinite; }
 .team-presence.attention { background:var(--warn-ink); }
 @keyframes team-pulse { 50% { box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent); } }
 @media (prefers-reduced-motion:reduce) { .team-presence.working { animation:none; } }
-.team-hover-line { position:absolute; left:40px; display:flex; gap:8px; align-items:center; color:var(--muted); opacity:0; pointer-events:none; white-space:nowrap; font-size:var(--fs-meta); }
+.team-hover-line { position:absolute; left:55px; display:flex; gap:8px; align-items:center; color:var(--muted); opacity:0; pointer-events:none; white-space:nowrap; font-size:var(--fs-meta); }
 .team-icon-button:hover .team-hover-line,.team-icon-button:focus-visible .team-hover-line { opacity:1; }
 .team-quick-look { position:absolute; bottom:26px; left:0; width:min(560px,100%); padding:14px 12px 8px; background:var(--panel); border:1px solid var(--line-strong); box-shadow:0 12px 36px -16px #0006; border-radius:12px; max-height:min(65vh,620px); overflow:auto; }
 .team-quick-look h3 { margin:0 4px 4px; font-size:var(--fs-body); font-weight:600; color:var(--ink); }
@@ -2248,6 +2248,8 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .team-tabs button { background:none; border:0; border-radius:6px; padding:6px 10px; color:var(--muted); cursor:pointer; }
 .team-tabs [aria-selected="true"],.team-tabs [aria-pressed="true"] { color:var(--ink); background:var(--chrome-hover); font-weight:500; }
 .team-close { margin-left:auto; font-size:var(--fs-title)!important; }
+.team-pane-header .team-full-session { margin-left:auto; font-size:var(--fs-meta); }
+.team-full-session + .team-close { margin-left:0; }
 .team-attention-count { margin-left:6px; background:var(--warn-soft); color:var(--warn-ink); border-radius:9px; padding:1px 5px; font-size:var(--fs-label); }
 .team-pane-body { flex:1; min-height:0; overflow:auto; padding:20px; }
 .team-pane-body h2,.team-worker-header h2 { font-size:var(--fs-title); font-weight:600; letter-spacing:-.01em; margin:0 0 4px; }

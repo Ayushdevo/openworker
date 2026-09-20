@@ -328,7 +328,7 @@ export interface MessageSource {
   text: string; // the RAW message (what the card shows)
   // Board wakes only (connector === "board"): the digest as structured rows, so
   // the BoardWakeCard renders collapsed summaries instead of re-parsing prose.
-  board?: { rows: BoardWakeRow[] };
+  board?: { rows: BoardWakeRow[]; check_in?: boolean };
 }
 
 // One digest event on a board wake. `note` is a UI-clamped excerpt of a hand-off

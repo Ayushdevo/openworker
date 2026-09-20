@@ -1,5 +1,35 @@
 import { expect, test } from "@playwright/test";
 
+for (const theme of ["light", "dark"]) {
+  test(`right panel opens team tabs and workers beside the lead (${theme})`, async ({ page }) => {
+    await page.addInitScript((value) => {
+      localStorage.setItem("coworker:rail-hidden:v1", "0");
+      localStorage.setItem("openwork-theme", value);
+    }, theme);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/?scenario=team-view-5#/s/scn-team-view-5");
+    const toggle = page.getByTestId("rail-toggle-team");
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(page.getByTestId("team-chat-off")).toBeVisible();
+    await page.getByTestId("rail-open-team-view").click();
+    const pane = page.getByTestId("team-view");
+    await expect(pane.getByRole("tab")).toHaveCount(3);
+    await pane.getByRole("button", { name: "Close team view" }).click();
+    await page.screenshot({ path: `test-results/team-rail-${theme}.png` });
+    await page.getByTestId("team-row-sam").click();
+    await expect(pane.getByRole("heading", { name: "sam", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/#\/s\/scn-team-view-5$/);
+    await expect(page.getByTestId("session-title")).toHaveText("Refund rounding · Acme");
+    await expect.poll(() => page.locator(".sidebar").evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/team-rail-worker-${theme}.png` });
+    await pane.getByRole("button", { name: "Open full session" }).click();
+    await expect(page).toHaveURL(/#\/s\/scn-team-view-5-sam$/);
+    await page.getByRole("button", { name: "Back to lead" }).click();
+    await expect(page).toHaveURL(/#\/s\/scn-team-view-5$/);
+  });
+}
+
 test("a directly opened worker retains a route back to its lead after reload", async ({ page }) => {
   await page.goto("/?scenario=team-view-5#/s/scn-team-view-5-sam");
   await expect(page.getByTestId("session-title")).toHaveText("sam");
@@ -137,6 +167,9 @@ test("quick look is keyboard controlled and does not move the composer", async (
   });
   const composer = page.getByPlaceholder(/Ask the coworker/);
   const before = await composer.boundingBox();
+  const iconBox = await icon.boundingBox();
+  const textInset = await composer.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft));
+  expect(Math.abs(iconBox!.x - before!.x - textInset)).toBeLessThanOrEqual(1);
   await icon.hover();
   expect(await composer.boundingBox()).toEqual(before);
   await icon.focus();

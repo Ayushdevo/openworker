@@ -92,6 +92,19 @@ def test_busy_timer_defers_instead_of_steering_or_being_lost(manager):
     assert len(manager.wakes.due()) == 1
 
 
+def test_lead_timer_has_replayable_display_source_without_changing_receipt(manager):
+    manager.provider = ScriptedProvider([_text_turn("Checked")])
+    wake = timer(manager, -1, "Check verifier evidence")
+    asyncio.run(manager._resume_wake(wake))
+    message = next(m for m in manager.session_store.load("lead").messages if m["role"] == "user")
+    assert message["source"]["connector"] == "board"
+    assert message["source"]["board"]["check_in"] is True
+    assert "Check verifier evidence" in message["source"]["text"]
+    assert message["source"]["text"] == message["content"]
+    assert wake.id in message["_activity"]["wake_ids"]
+    assert not manager.wakes.pending("lead")
+
+
 def test_due_timer_and_board_produce_one_turn(manager):
     manager.provider = ScriptedProvider([_text_turn("Checked")])
     review(manager)

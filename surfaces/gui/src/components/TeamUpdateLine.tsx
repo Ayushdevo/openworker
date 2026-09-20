@@ -69,14 +69,27 @@ export function foldTeamUpdates(
         next.source.connector === "board" &&
         next.source.channel_id === item.source.channel_id
       ) {
-        steps.push(...items.slice(end + 1, j));
         sources.push(next.source);
         end = j;
         continue;
       }
-      if (next.kind === "tool") continue;
-      if (next.kind === "assistant" && !next.text.trim() && !next.reasoning)
+      if (next.kind === "tool") {
+        steps.push(next);
+        end = j;
         continue;
+      }
+      if (next.kind === "assistant") {
+        // Narration preceding a tool belongs to the background check. A terminal
+        // answer, decision, human message, or pending approval remains visible.
+        const following = items[j + 1];
+        const verdict = following?.kind === "tool" && following.name === "transition"
+          && ["review", "done", "canceled"].includes(String(following.args.to));
+        if ((!next.text.trim() && !next.reasoning) || (following?.kind === "tool" && !verdict)) {
+          steps.push(next);
+          end = j;
+          continue;
+        }
+      }
       break;
     }
     out.push({ item, sources, steps });
@@ -111,7 +124,7 @@ export function TeamUpdateLine({
       <summary className="team-update-head transcript-disclosure">
         <Icon name="chevronDown" size={12} />
         <span>
-          {rows.length
+          {rows.length || sources.length > 1
             ? t(sources.length > 1 ? "teamview.updates" : "teamview.update", {
                 count: sources.length,
               }) + " · "
@@ -128,6 +141,7 @@ export function TeamUpdateLine({
         )}
       </summary>
       <div className="team-update-body">
+        {sources.filter(s => s.board?.check_in).map((s, i) => <p key={`check-in-${i}`}>{s.text}</p>)}
         {[...groups].map(([key, group]) => {
           const last = group[group.length - 1],
             moves = group.filter((r) => r.kind === "moved");

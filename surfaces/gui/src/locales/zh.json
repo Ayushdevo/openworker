@@ -250,7 +250,7 @@
     "team_open_session": "打开 {{name}} 的会话",
     "team_worker": "成员",
     "team_sleeping": "休眠",
-    "team_open": "打开 ↗",
+    "team_open": "查看",
     "team_chat": "团队聊天",
     "back_to": "返回{{name}}",
     "crumb_files": "文件",
@@ -2329,6 +2329,10 @@
     "linked_tasks": "已分配的任务（{{count}}）",
     "related_conversations": "相关协作者会话",
     "send": "发送",
-    "worker_offline": "成员连接不可用，重新连接之前无法发送消息。"
+    "worker_offline": "成员连接不可用，重新连接之前无法发送消息。",
+    "open_view": "打开团队视图",
+    "open_worker_pane": "在主代理旁查看 {{name}}",
+    "full_session": "打开完整会话",
+    "chat_off": "此团队未启用团队聊天"
   }
 }

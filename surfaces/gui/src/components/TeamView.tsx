@@ -681,6 +681,8 @@ export function TeamView({
   summary,
   board,
   initialItem,
+  initialWorkerId,
+  onOpenFullSession,
   openKey = 0,
   sessionId,
   sessions,
@@ -693,6 +695,8 @@ export function TeamView({
   openKey?: number;
   board?: Board | null;
   initialItem?: number | null;
+  initialWorkerId?: string | null;
+  onOpenFullSession?: (id: string) => void;
   sessionId: string;
   sessions: SessionInfo[];
   machine?: string | null;
@@ -703,11 +707,11 @@ export function TeamView({
   const { t } = useTranslation();
   const [tab, setTab] = useState<"work" | "workers" | "stats">("work");
   const [selected, setSelected] = useState<number | null>(initialItem ?? null);
-  const [selectedWorker, setSelectedWorker] = useState<TeamWorker | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<string | null>(initialWorkerId ?? null);
   useEffect(() => {
     setSelected(initialItem ?? null);
-    setSelectedWorker(null);
-  }, [initialItem, sessionId, openKey]);
+    setSelectedWorker(initialWorkerId ?? null);
+  }, [initialItem, initialWorkerId, sessionId, openKey]);
   const fallbackItems: TeamTask[] = (board?.items || []).map((i) => ({
     ...i,
     group: i.waiting
@@ -745,14 +749,14 @@ export function TeamView({
         }),
       );
   const worker = workers.find(
-    (w) => w.session_id === selectedWorker?.session_id,
+    (w) => w.session_id === selectedWorker,
   );
   const goBack = () => {
     setSelected(null);
     setSelectedWorker(null);
   };
   const openWorker = (w: TeamWorker) => {
-    setSelectedWorker(w);
+    setSelectedWorker(w.session_id);
     setSelected(null);
   };
   const openTask = (id: number) => {
@@ -799,6 +803,9 @@ export function TeamView({
               ))}
           </div>
         )}
+        {worker && onOpenFullSession && <button className="team-full-session" onClick={() => onOpenFullSession(worker.session_id)}>
+          {t("teamview.full_session")}
+        </button>}
         <button
           className="team-close"
           onClick={onClose}

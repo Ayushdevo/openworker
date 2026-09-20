@@ -53,6 +53,43 @@ def request_for(manager):
     return original, request
 
 
+def test_reviewer_settings_hot_apply_to_cached_lead_and_worker(manager):
+    from coworker.permissions import Mode
+
+    manager.provider = ScriptedProvider([])
+    lead = manager.get_engine("lead", agent="swe-lead")
+    worker = manager.get_engine("worker", agent="swe-worker")
+    assert lead.reviewer is None and worker.reviewer is None
+    original, _ = request_for(manager)
+    worker._reviewer_denials = 1
+    lead.permissions.mode = Mode.AUTO_APPROVE
+    manager.save("lead", lead, touch=False)
+
+    manager.set_auto_approve(True)
+    assert manager.get_engine("worker") is worker
+    assert lead.reviewer is not None and worker.reviewer is not None
+    assert worker.permissions.mode is Mode.AUTO_APPROVE
+    assert worker._reviewer_active()
+    assert worker._reviewer_denials == 1
+    assert original.state == "pending"  # never retroactively clear a parked action
+    reviewer = worker.reviewer
+    manager.sync_cached_reviewers()
+    assert worker.reviewer is reviewer
+
+    manager.set_auto_approve_shadow(True)
+    manager.set_auto_approve(False)
+    assert worker.reviewer is reviewer and worker.reviewer_shadow
+    assert not worker._reviewer_active()  # shadow does not grant live approval
+    manager.set_auto_approve_shadow(False)
+    assert lead.reviewer is None and worker.reviewer is None
+    manager.set_auto_approve(True)
+    lead.permissions.mode = Mode.INTERACTIVE
+    manager.save("lead", lead, touch=False)
+    manager.sync_cached_reviewers()
+    assert worker.permissions.mode is Mode.INTERACTIVE
+    assert not worker._reviewer_active()
+
+
 @pytest.mark.parametrize("resolve_first", [False, True])
 @pytest.mark.parametrize("answer", ["allow", "deny"])
 def test_worker_resolution_retires_linked_gate_before_or_after_creation(
