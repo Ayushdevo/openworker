@@ -17,12 +17,12 @@ import {
 import type { SessionInfo, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { BoardSection } from "./BoardPanel";
+import { TeamRail } from "./TeamRail";
+import type { TeamSummary } from "../teamView";
+import type { WorkerFilter } from "../teamRoster";
 
 import { Icon } from "./Icon";
-import { formatTokens, totalTokens } from "../usage";
-import type { SessionUsage, TurnUsage } from "../types";
-
-const totalOf = (u: TurnUsage) => u.input + u.output + u.cache_read + u.cache_write;
+import type { SessionUsage } from "../types";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
 type Panel = "progress" | "artifacts" | "board" | "journal" | "team" | "files";
@@ -86,6 +86,9 @@ interface Props {
   onOpenTeamChat?: () => void;
   onOpenWorker?: (s: SessionInfo) => void;
   onOpenTeamView?: () => void;
+  onOpenWorkers?: (filter: WorkerFilter) => void;
+  teamSummary?: TeamSummary | null;
+  teamMachine?: string;
   // Bumped when a [.](board:) chip in the transcript is clicked — expands the Board section.
   openBoardKey?: number;
 }
@@ -118,6 +121,9 @@ export function RightRail({
   onOpenTeamChat,
   onOpenWorker,
   onOpenTeamView,
+  onOpenWorkers,
+  teamSummary,
+  teamMachine,
   openBoardKey = 0,
 }: Props) {
   const { t } = useTranslation();
@@ -293,60 +299,10 @@ export function RightRail({
           {/* The team panel: who's working, on what, and the way into their sessions —
               the altitude-3 escape hatch, moved here from the sidebar (RECENT keeps ONE
               entry per team: the lead). */}
-          {teamMembers.length > 0 && (
-            <RailSection
-              title={t("rail.team_title")}
-              open={open.team}
-              onToggle={() => setOpen({ ...open, team: !open.team })}
-              count={String(teamMembers.length)}
-            >
-              <div className="rail-team" data-testid="team-panel">
-                {onOpenTeamView && <button className="rail-team-row" data-testid="rail-open-team-view" onClick={onOpenTeamView}>
-                  <Icon name="panelOpen" size={13} /> {t("teamview.open_view")}
-                </button>}
-                {teamMembers.map((w) => (
-                  <button
-                    className="rail-team-row"
-                    key={w.session_id}
-                    data-testid={`team-row-${w.team?.actor || w.session_id}`}
-                    onClick={() => onOpenWorker?.(w)}
-                    title={t("teamview.open_worker_pane", { name: w.team?.actor || t("rail.team_worker") })}
-                  >
-                    <span className={"team-dot " + (w.team?.status || "idle")} />
-                    <span className="rail-team-name">{w.team?.actor || w.agent}</span>
-                    <span className="rail-team-item">{w.team?.current_item || t("rail.team_sleeping")}</span>
-                    <span className="rail-team-open">{t("rail.team_open")}</span>
-                  </button>
-                ))}
-                {teamChatEnabled && onOpenTeamChat && (
-                  <button className="rail-team-row rail-chat-row" data-testid="team-chat-row" onClick={onOpenTeamChat}>
-                    <span className="team-hash">#</span>
-                    <span className="rail-team-name">{t("rail.team_chat")}</span>
-                    {teamChatUnread > 0 && <span className="team-chat-badge">{teamChatUnread}</span>}
-                  </button>
-                )}
-                {!teamChatEnabled && <p className="team-totals" data-testid="team-chat-off">{t("teamview.chat_off")}</p>}
-                {teamUsage && totalTokens(teamUsage) > 0 && (
-                  /* Tokens for the whole tree (lead + workers), by model. Counts only —
-                     no dollars (owner ruling, spec §5). */
-                  <div className="rail-team-usage" data-testid="team-usage">
-                    <div className="rail-team-usage-head">
-                      <span>{t("misc.rail.tokens")}</span>
-                      <span className="text-muted">{formatTokens(totalTokens(teamUsage))}</span>
-                    </div>
-                    {Object.entries(teamUsage.byModel)
-                      .sort((a, b) => totalOf(b[1]) - totalOf(a[1]))
-                      .map(([model, u]) => (
-                        <div className="rail-team-usage-row" key={model} title={t("misc.rail.usage_title", { model, input: u.input, output: u.output, cached: u.cache_read })}>
-                          <span className="rail-team-usage-model">{model.includes(":") ? model.split(":").slice(1).join(":") : model}</span>
-                          <span className="text-muted">{formatTokens(totalOf(u))}</span>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </RailSection>
-          )}
+          {teamMembers.length > 0 && <TeamRail key={sessionId} members={teamMembers} summary={teamSummary}
+            open={open.team} onToggle={() => setOpen({ ...open, team: !open.team })}
+            usage={teamUsage} machine={teamMachine} chatEnabled={teamChatEnabled} unread={teamChatUnread}
+            onChat={onOpenTeamChat} onWorker={onOpenWorker} onTeam={onOpenTeamView} onWorkers={onOpenWorkers} />}
 
           {showArtifacts && (
           <RailSection

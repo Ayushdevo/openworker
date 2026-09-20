@@ -33,6 +33,8 @@ import { ItemDetail } from "./BoardPanel";
 import { taskDot } from "./TaskChip";
 import { Icon } from "./Icon";
 import { Composer } from "./Composer";
+import { WorkerSearch } from "./TeamRail";
+import { teamRoster, filterWorkers, type WorkerFilter } from "../teamRoster";
 
 export const minutes = (seconds: number) =>
   Math.max(0, Math.round(seconds / 60));
@@ -350,96 +352,117 @@ export function MetricBar({
 }
 
 function WorkerRows({
-  summary: s,
+  summary,
+  sessions,
   onWorker,
   machine,
+  filter,
+  onFilter,
+  page,
+  onPage,
 }: {
   summary: TeamSummary;
+  sessions: SessionInfo[];
   onWorker: (worker: TeamWorker) => void;
   machine?: string;
+  filter: WorkerFilter;
+  onFilter: (filter: WorkerFilter) => void;
+  page: number;
+  onPage: (page: number) => void;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState<string[]>([]);
-  const row = (w: TeamWorker) => (
-    <button
-      className="team-task-row"
-      key={w.actor}
-      onClick={() => onWorker(w)}
-      data-testid={`team-worker-${w.actor}`}
-    >
-      <span className={taskDot(w.running ? "in_progress" : "open")} />
-      <span className="team-task-main">
-        <span className="team-task-title">
-          {w.actor} <small>· {w.role}</small>
-        </span>
-        <span className="team-task-status">
-          {s.items
-            .filter(
-              (i) =>
-                w.items.includes(i.id) &&
-                !["done", "canceled"].includes(i.group),
-            )
-            .map((i) => i.status || i.title)
-            .join(" · ") || t("teamview.idle")}
-        </span>
-      </span>
-      <span className="team-worker-chip">
-        {machine || t("teamview.this_machine")}
-      </span>
-      <span>{formatTokens(tokenTotal(w.tokens))}</span>
-    </button>
+  const entries = teamRoster(
+    sessions.filter((s) =>
+      summary.workers.some((w) => w.session_id === s.session_id),
+    ),
+    summary,
+    machine || t("teamview.this_machine"),
   );
-  if (s.workers.length <= 8) return <>{s.workers.map(row)}</>;
+  const matches = filterWorkers(entries, filter);
+  const current = Math.min(
+    page,
+    Math.max(0, Math.ceil(matches.length / 8) - 1),
+  );
   return (
     <>
-      {[...new Set(s.workers.map((w) => w.role))].map((role) => {
-        const workers = s.workers.filter((w) => w.role === role);
-        const items = s.items.filter((i) =>
-          workers.some((w) => w.items.includes(i.id)),
-        );
-        const done = items.filter((i) => i.group === "done").length;
-        return (
-          <section key={role}>
-            <div className="team-group-heading">
-              {role} × {workers.length}
-              {s.workers.length > 30 && (
-                <>
-                  <progress
-                    value={done}
-                    max={Math.max(1, items.length)}
-                    aria-label={t("teamview.done_count", {
-                      done,
-                      total: items.length,
-                    })}
-                  />
-                  <span>
-                    {formatTokens(
-                      workers.reduce((n, w) => n + tokenTotal(w.tokens), 0),
-                    )}
-                  </span>
-                  <button
-                    onClick={() =>
-                      setExpanded((x) =>
-                        x.includes(role)
-                          ? x.filter((r) => r !== role)
-                          : [...x, role],
-                      )
-                    }
-                  >
-                    {t(
-                      expanded.includes(role)
-                        ? "teamview.hide_workers"
-                        : "teamview.show_workers",
-                    )}
-                  </button>
-                </>
-              )}
-            </div>
-            {(s.workers.length <= 30 || expanded.includes(role)) &&
-              workers.map(row)}
-          </section>
-        );
-      })}
+      <WorkerSearch
+        value={filter.query || ""}
+        onChange={(query) => {
+          onFilter({ ...filter, query });
+          onPage(0);
+        }}
+      />
+      {(filter.role || filter.attention) && (
+        <div className="team-roster-filter">
+          <span>{filter.role || t("teamview.needs_attention")}</span>
+          <button
+            onClick={() => {
+              onFilter({ query: filter.query });
+              onPage(0);
+            }}
+          >
+            {t("teamview.clear_filter")}
+          </button>
+        </div>
+      )}
+      <p className="team-roster-caption" role="status">
+        {t("teamview.worker_matches", { count: matches.length })}
+      </p>
+      {matches.slice(current * 8, current * 8 + 8).map((w) => (
+        <button
+          className="team-task-row"
+          key={w.id}
+          data-testid={`team-worker-${w.name}`}
+          onClick={() => w.worker && onWorker(w.worker!)}
+        >
+          <span
+            className={taskDot(
+              w.attention ? "blocked" : w.working ? "in_progress" : "open",
+            )}
+          />
+          <span className="team-task-main">
+            <span className="team-task-title">
+              {w.name} <small>· {w.role}</small>
+            </span>
+            <span className="team-task-status">
+              {w.task || t("teamview.idle")}
+            </span>
+          </span>
+          <span className="team-worker-chip">{w.machine}</span>
+          <span>{formatTokens(tokenTotal(w.worker!.tokens))}</span>
+        </button>
+      ))}
+      {matches.length > 8 && (
+        <div className="team-roster-pagination">
+          <button
+            className="rail-mini-btn"
+            disabled={current === 0}
+            aria-label={t("teamview.previous_workers")}
+            onClick={() => onPage(current - 1)}
+          >
+            <Icon
+              name="chevronRight"
+              size={14}
+              className="team-roster-previous"
+            />
+          </button>
+          <span>
+            {t("teamview.worker_range", {
+              start: current * 8 + 1,
+              end: Math.min(current * 8 + 8, matches.length),
+              count: matches.length,
+            })}
+          </span>
+          <button
+            className="rail-mini-btn"
+            disabled={(current + 1) * 8 >= matches.length}
+            aria-label={t("teamview.next_workers")}
+            onClick={() => onPage(current + 1)}
+          >
+            <Icon name="chevronRight" size={14} />
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -682,6 +705,7 @@ export function TeamView({
   board,
   initialItem,
   initialWorkerId,
+  initialWorkerFilter,
   onOpenFullSession,
   openKey = 0,
   sessionId,
@@ -696,6 +720,7 @@ export function TeamView({
   board?: Board | null;
   initialItem?: number | null;
   initialWorkerId?: string | null;
+  initialWorkerFilter?: WorkerFilter | null;
   onOpenFullSession?: (id: string) => void;
   sessionId: string;
   sessions: SessionInfo[];
@@ -706,12 +731,21 @@ export function TeamView({
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"work" | "workers" | "stats">("work");
+  const [workerFilter, setWorkerFilter] = useState<WorkerFilter>(
+    initialWorkerFilter || {},
+  );
+  const [workerPage, setWorkerPage] = useState(0);
   const [selected, setSelected] = useState<number | null>(initialItem ?? null);
-  const [selectedWorker, setSelectedWorker] = useState<string | null>(initialWorkerId ?? null);
+  const [selectedWorker, setSelectedWorker] = useState<string | null>(
+    initialWorkerId ?? null,
+  );
   useEffect(() => {
     setSelected(initialItem ?? null);
     setSelectedWorker(initialWorkerId ?? null);
-  }, [initialItem, initialWorkerId, sessionId, openKey]);
+    setWorkerFilter(initialWorkerFilter || {});
+    setWorkerPage(0);
+    setTab(initialWorkerFilter ? "workers" : "work");
+  }, [initialItem, initialWorkerId, initialWorkerFilter, sessionId, openKey]);
   const fallbackItems: TeamTask[] = (board?.items || []).map((i) => ({
     ...i,
     group: i.waiting
@@ -733,24 +767,20 @@ export function TeamView({
     summary?.workers ||
     sessions
       .filter((w) => w.team?.lead_session === sessionId && w.team?.actor)
-      .map(
-        (w): TeamWorker => ({
-          actor: w.team!.actor!,
-          role: w.agent,
-          session_id: w.session_id,
-          model: w.model,
-          workspace: w.workspace,
-          running: w.liveness === "working",
-          tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          usage_partial: true,
-          items: shownItems
-            .filter((i) => i.assignee === w.team!.actor)
-            .map((i) => i.id),
-        }),
-      );
-  const worker = workers.find(
-    (w) => w.session_id === selectedWorker,
-  );
+      .map((w): TeamWorker => ({
+        actor: w.team!.actor!,
+        role: w.agent,
+        session_id: w.session_id,
+        model: w.model,
+        workspace: w.workspace,
+        running: w.liveness === "working",
+        tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+        usage_partial: true,
+        items: shownItems
+          .filter((i) => i.assignee === w.team!.actor)
+          .map((i) => i.id),
+      }));
+  const worker = workers.find((w) => w.session_id === selectedWorker);
   const goBack = () => {
     setSelected(null);
     setSelectedWorker(null);
@@ -803,9 +833,14 @@ export function TeamView({
               ))}
           </div>
         )}
-        {worker && onOpenFullSession && <button className="team-full-session" onClick={() => onOpenFullSession(worker.session_id)}>
-          {t("teamview.full_session")}
-        </button>}
+        {worker && onOpenFullSession && (
+          <button
+            className="team-full-session"
+            onClick={() => onOpenFullSession(worker.session_id)}
+          >
+            {t("teamview.full_session")}
+          </button>
+        )}
         <button
           className="team-close"
           onClick={onClose}
@@ -904,6 +939,11 @@ export function TeamView({
               <TeamTotals summary={summary} />
               <WorkerRows
                 summary={summary}
+                sessions={sessions}
+                filter={workerFilter}
+                onFilter={setWorkerFilter}
+                page={workerPage}
+                onPage={setWorkerPage}
                 onWorker={openWorker}
                 machine={machineName}
               />

@@ -122,7 +122,7 @@ test("enabling chat at the gate adds the # team chat row; posting works with men
   // The chat row lives in the drawer's Team panel now (sessions poll: allow a cycle).
   await expect(page.getByTestId("rail-toggle-team")).toBeVisible({ timeout: 12_000 });
   await page.getByTestId("rail-toggle-team").click();
-  const chatRow = page.getByTestId("team-chat-row");
+  const chatRow = page.getByTestId("team-chat-action");
   await expect(chatRow).toBeVisible();
   await expect(chatRow).toContainText("1"); // unread badge
 
@@ -199,9 +199,9 @@ test("approval creates the team; members live in the drawer, RECENT keeps one en
   await teamToggle.click();
   const panel = page.getByTestId("team-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("team-row-nia")).toContainText("#1 in progress");
-  await expect(panel.getByTestId("team-row-webb")).toContainText("idle");
-  await expect(panel.getByTestId("team-row-checks")).toContainText("#4 blocked");
+  await expect(panel.getByTestId("team-row-nia")).toContainText("nia");
+  await expect(panel.getByTestId("team-row-webb")).toContainText("Idle");
+  await expect(panel.getByTestId("team-row-checks")).toContainText("Needs attention");
 
   // Worker inspection keeps the lead alongside; full navigation is explicit.
   await panel.getByTestId("team-row-nia").click();

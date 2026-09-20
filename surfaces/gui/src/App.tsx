@@ -108,6 +108,7 @@ import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { TeamView, TeamQuickLook } from "./components/TeamView";
+import type { WorkerFilter } from "./teamRoster";
 import type { TeamSummary } from "./teamView";
 import { getTeamSummary } from "./api";
 import { TaskBoardContext, OPEN_TASK_EVENT } from "./components/TaskChip";
@@ -395,6 +396,7 @@ export function App() {
   const [boardOwner, setBoardOwner] = useState("");
   const [teamViewOpen, setTeamViewOpen] = useState(false);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
+  const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
   // A rail row click deep-opens the overlay on that item's detail pane.
   const [boardDetailId, setBoardDetailId] = useState<number | null>(null);
@@ -488,7 +490,7 @@ export function App() {
     const show = () => {
       setRailHidden(false);
       setBoardRailKey((k) => k + 1);
-      setBoardDetailId(null); setTeamWorkerId(null); setTeamViewOpen(true);
+      setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamViewOpen(true);
     };
     window.addEventListener("ocw-open-board", show);
     return () => window.removeEventListener("ocw-open-board", show);
@@ -1247,7 +1249,7 @@ export function App() {
     const open = (e: Event) => {
       const d = (e as CustomEvent).detail;
       if (d?.sessionId !== sessionId || d.space !== board?.space || !board?.items.some(i => i.id === d.id)) return;
-      setBoardDetailId(d.id); setTeamWorkerId(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false);
+      setBoardDetailId(d.id); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false);
     };
     window.addEventListener(OPEN_TASK_EVENT, open);
     return () => window.removeEventListener(OPEN_TASK_EVENT, open);
@@ -1267,7 +1269,7 @@ export function App() {
     (s) => s.team?.role === "worker" && s.team.lead_session === sessionId,
   );
 
-  useEffect(() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamSummary(null); }, [sessionId]);
+  useEffect(() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamSummary(null); }, [sessionId]);
   const activeTeamId = curSession?.team?.team_id;
   useEffect(() => {
     if (!activeTeamId || surface !== "session") { setTeamSummary(null); return; }
@@ -1277,7 +1279,7 @@ export function App() {
     }).catch(() => { if (!canceled) setTeamSummary(null); });
     return () => { canceled = true; };
   }, [sessionId, activeTeamId, surface, sessions, browserRefreshKey, running]);
-  const openTeamView = (id?: number) => { setBoardDetailId(id ?? null); setTeamWorkerId(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); };
+  const openTeamView = (id?: number) => { setBoardDetailId(id ?? null); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); };
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
@@ -2474,7 +2476,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
@@ -2504,11 +2506,14 @@ export function App() {
               (curSession?.team?.role != null && curSession.team.role !== "worker")
             }
             teamMembers={teamMembers}
+            teamSummary={teamSummary?.lead_session === sessionId ? teamSummary : null}
+            teamMachine={curSession?.machine_name}
+            onOpenWorkers={(filter) => { setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(filter); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             teamChatEnabled={!!curSession?.team?.chat_enabled}
             teamChatUnread={curSession?.team?.chat_unread || 0}
             teamUsage={teamMembers.length ? teamUsage(usage, teamMembers) : undefined}
             onOpenTeamChat={() => setChatTeam(curSession?.team?.team_id || "")}
-            onOpenWorker={(w) => { setBoardDetailId(null); setTeamWorkerId(w.session_id); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
+            onOpenWorker={(w) => { setBoardDetailId(null); setTeamWorkerId(w.session_id); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             openBoardKey={boardRailKey}
           />
 

@@ -249,8 +249,8 @@ describe("team view", () => {
     );
     expect(screen.getByText("1 task is waiting on you.")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Workers" }));
-    expect(screen.getAllByText("Show workers").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByText("Show workers")[0]);
+    expect(screen.getByRole("searchbox")).toBeTruthy();
+    expect(screen.getAllByTestId(/^team-worker-/)).toHaveLength(8);
     expect(screen.getByTestId("team-worker-sam")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
     expect(screen.getByText("Top five of 100 workers")).toBeTruthy();

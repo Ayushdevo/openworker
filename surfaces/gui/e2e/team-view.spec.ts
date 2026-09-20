@@ -11,7 +11,10 @@ for (const theme of ["light", "dark"]) {
     const toggle = page.getByTestId("rail-toggle-team");
     await expect(toggle).toBeVisible();
     await toggle.click();
+    await expect(page.getByTestId("team-chat-off")).toHaveCount(0);
+    await page.getByTestId("team-chat-action").click();
     await expect(page.getByTestId("team-chat-off")).toBeVisible();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await page.getByTestId("rail-open-team-view").click();
     const pane = page.getByTestId("team-view");
     await expect(pane.getByRole("tab")).toHaveCount(3);
@@ -145,10 +148,8 @@ test("large team groups workers and shows top five token consumers", async ({
   await quick.getByRole("button", { name: "Open team view" }).click();
   const pane = page.getByTestId("team-view");
   await pane.getByRole("tab", { name: "Workers" }).click();
-  await expect(pane.getByRole("button", { name: "Show workers" })).toHaveCount(
-    4,
-  );
-  await pane.getByRole("button", { name: "Show workers" }).first().click();
+  await expect(pane.getByTestId(/^team-worker-/).filter({ hasNot: page.locator("textarea") })).toHaveCount(8);
+  await expect(pane.getByRole("searchbox")).toBeVisible();
   await expect(pane.getByTestId("team-worker-sam")).toBeVisible();
   await pane.getByRole("tab", { name: "Stats" }).click();
   await expect(pane.getByText("Top five of 100 workers")).toBeVisible();
