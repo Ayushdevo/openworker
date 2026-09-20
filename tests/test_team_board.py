@@ -255,8 +255,8 @@ def test_tool_sets_are_role_filtered(store):
     worker_names = {
         tool.__name__ for tool in board_tools(store, space=SPACE, actor=WORKER)
     }
-    assert lead_names == {"create_item", "list_items", "transition", "comment", "assign", "link"}
-    assert worker_names == {"create_item", "list_items", "transition", "comment", "claim", "set_status"}
+    assert lead_names == {"create_item", "list_items", "get_item", "transition", "comment", "assign", "link"}
+    assert worker_names == {"create_item", "list_items", "get_item", "transition", "comment", "claim", "set_status"}
 
 
 def test_tools_return_errors_instead_of_raising(store):

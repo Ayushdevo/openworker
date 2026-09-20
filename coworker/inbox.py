@@ -113,6 +113,7 @@ class InboxStore:
         self._lock = threading.Lock()
         self._items: dict[str, InboxItem] = {}
         self._waiters: dict[str, asyncio.Event] = {}
+        self._waiter_loops: dict[str, asyncio.AbstractEventLoop] = {}
         self._load()
 
     # -- persistence ------------------------------------------------------------
@@ -413,7 +414,9 @@ class InboxStore:
         for resolved_id in resolved_ids:
             waiter = self._waiters.get(resolved_id)
             if waiter is not None:
-                waiter.set()
+                loop = self._waiter_loops.get(resolved_id)
+                if loop is not None and not loop.is_closed():
+                    loop.call_soon_threadsafe(waiter.set)
         return True
 
     def resolve_session(
@@ -436,6 +439,7 @@ class InboxStore:
             if item is not None and item.state == STATE_RESOLVED:
                 return item.resolution or ""
             ev = self._waiters.setdefault(item_id, asyncio.Event())
+            self._waiter_loops[item_id] = asyncio.get_running_loop()
         await ev.wait()
         resolved = self._items.get(item_id)
         return (resolved.resolution if resolved else "") or ""

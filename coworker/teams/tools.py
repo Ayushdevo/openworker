@@ -19,13 +19,13 @@ from .journal import JournalStore
 from .model import Actor, BoardError, Role
 from .store import TeamStore
 
-LEAD_VERBS = ("create_item", "list_items", "transition", "comment", "assign", "link")
+LEAD_VERBS = ("create_item", "list_items", "get_item", "transition", "comment", "assign", "link")
 # Workers file items too (a bug spotted in passing, a follow-up) — new items land
 # `open` and unassigned; nothing runs until the item is assigned. `claim` is
 # self-assignment: on an open-claims board (the default) a worker may pick up an
 # open, unassigned item — the store arbitrates races, the lead supervises by
 # exception (every claim lands in its feed; reassign/cancel revokes).
-WORKER_VERBS = ("create_item", "list_items", "transition", "comment", "claim", "set_status")
+WORKER_VERBS = ("create_item", "list_items", "get_item", "transition", "comment", "claim", "set_status")
 JOURNAL_VERBS = ("journal_append", "journal_read")
 
 
@@ -118,6 +118,14 @@ def board_tools(
         currently assigned to you. Explicit item id required. Display only: does
         not change state, wake the lead, or replace evidence and review."""
         return _call(store.set_status, space, actor, item, text)
+
+    def get_item(item: int) -> dict:
+        """Read one visible task's full description, acceptance criteria, links,
+        evidence references and comments. Scoped to this board and your identity.
+        This reads board evidence, never another agent's conversation."""
+        if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+            return {"error": "item must be a positive integer"}
+        return with_mention(_call(store.get_item, space, item, actor=actor))
 
     def transition(
         item: int, to: str, comment: str = "", refs: Optional[list] = None

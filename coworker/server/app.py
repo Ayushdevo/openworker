@@ -289,6 +289,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/inbox")
     def inbox(session_id: str = "", state: str = "") -> dict[str, Any]:
         from dataclasses import asdict
+        manager.reconcile_obsolete_prompts(session_id)
 
         # The cross-session Inbox list shows only Unattended (inbox-visibility) items; a per-session
         # query returns inline ones too, so the answer-in-context card sees parked attended prompts.
@@ -405,6 +406,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/inbox/reconcile")
     def reconcile_inbox(session_id: str) -> dict[str, Any]:
         # Called when a session resumes attended control (surface pending + recap inline).
+        manager.reconcile_obsolete_prompts(session_id)
         return manager.inbox.reconcile_on_resume(session_id)
 
     @app.get("/v1/inbox/routing")

@@ -687,6 +687,7 @@ class SessionManager:
         connector_requester: Optional[Any] = None,
     ) -> Optional[TurnEngine]:
         engine = self._engines.get(session_id)
+        self.reconcile_obsolete_prompts(session_id)
         if engine is not None:
             self.sync_worker_mode(session_id, engine)
             if approver is not None:
@@ -1176,10 +1177,13 @@ class SessionManager:
         team, worker = found
         item_id = None
         try:
-            for it in self.team_store.list_items(team.space, self._user_actor()):
-                if it.get("assignee") == worker.actor and it.get("state") == "in_progress":
-                    item_id = it.get("id")
-                    break
+            candidates = [
+                it for it in self.team_store.list_items(team.space, self._user_actor())
+                if it.get("assignee") == worker.actor and it.get("state") == "in_progress"
+            ]
+            # A session is not a task identity. Never pick the first candidate.
+            if len(candidates) == 1:
+                item_id = candidates[0]["id"]
         except Exception:  # noqa: BLE001
             item_id = None
         try:
@@ -1691,12 +1695,38 @@ class SessionManager:
         if engine is not None:
             self.save(session_id, engine)
 
+    def reconcile_obsolete_prompts(self, session_id: str = "") -> int:
+        """Retire only tool-bound prompts whose call already has a result.
+
+        A repaired interrupted call has a result stub too. A genuinely pending
+        call has no result and remains available for durable resume.
+        """
+        pending = self.inbox.pending(session_id or None)
+        answered_by_session = {}
+        retired = 0
+        for item in pending:
+            if not item.tool_call_id:
+                continue
+            if item.session_id not in answered_by_session:
+                engine = self._engines.get(item.session_id)
+                record = self.session_store.load(item.session_id) if engine is None else None
+                messages = engine.messages if engine is not None else (record.messages if record else [])
+                answered_by_session[item.session_id] = {
+                    m.get("tool_call_id") for m in messages if m.get("role") == "tool"
+                }
+            if item.tool_call_id in answered_by_session[item.session_id]:
+                if self.inbox.resolve(item.id, "interrupted", by="system:obsolete-prompt"):
+                    retired += 1
+        return retired
+
     async def resolve_inbox(self, item_id: str, resolution: str, by: str = "") -> bool:
         """Resolve an Inbox item from any surface (REST / Slack button / channel reply). If the
         asking agent is still suspended live, that await handles it. Otherwise the process restarted
         (or the engine was evicted) while blocked → durably resume: rebuild the engine from the
         saved thread and continue the turn. `by` = the deciding person when known."""
         item = self.inbox.get(item_id)
+        if item is not None:
+            self.reconcile_obsolete_prompts(item.session_id)
         ok = self.inbox.resolve(item_id, resolution, by=by)
         if not ok or item is None:
             return ok
@@ -2952,7 +2982,7 @@ class SessionManager:
         sid = team.lead_session
         self._team_last_alive[sid] = time.time()
         message = (
-            "⏰ Backstop check — work is in flight but you had no check-in timer"
+            "Check-in — work is in flight but you had no check-in timer"
             " set.\n\n"
             + (self.team_staleness_digest(sid) or "Board state unavailable.")
             + "\n\nGlance, act only if something needs you, and set your next"
@@ -3212,7 +3242,7 @@ class SessionManager:
         body = "\n".join(f"- {line}" for line in lines) or "- (no detail)"
         if is_lead:
             message = (
-                "⏰ Board wake — your team needs decisions:\n"
+                "Team update — your team needs decisions:\n"
                 + body
                 + "\n\nFull hand-off comments live on the board (get_item)."
                 " Verify review items against their acceptance criteria (then"
@@ -5107,6 +5137,8 @@ class SessionManager:
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
         is dropped, never fatal to the turn (delivery is socket-independent)."""
+        if message.get("type") == "turn_start":
+            self.reconcile_obsolete_prompts(session_id)
         data = message.get("data") or {}
         if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
             worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
@@ -6222,12 +6254,12 @@ class SessionManager:
         note = f" (note: {wake.note})" if getattr(wake, "note", "") else ""
         if wake.kind == "completion":
             return (
-                f"⏰ Wake — the job `{wake.job_id}` you were waiting on has completed{note}. "
+                f"Check-in — the job `{wake.job_id}` you were waiting on has completed{note}. "
                 "Continue where you left off."
             )
         if wake.kind == "event":
             return (
-                f"⏰ Wake — the event `{wake.event_key}` you were waiting on has fired{note}. "
+                f"Check-in — the event `{wake.event_key}` you were waiting on has fired{note}. "
                 "Continue where you left off."
             )
         # The fire time rides along so a woken session knows what time it is without a
@@ -6235,7 +6267,7 @@ class SessionManager:
         fired = getattr(wake, "fire_at", None)
         at = f" at {fired}" if fired else ""
         return (
-            f"⏰ Wake — the timer you set has fired{at}{note}. Continue where you left off."
+            f"Check-in — the timer you set has fired{at}{note}. Continue where you left off."
         )
 
     async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:
