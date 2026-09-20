@@ -1062,6 +1062,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
           anyWs.__modeNoticeShown = true;
           send("mode_notice", {
+            mode: msg.mode,
             title: "Auto-approve is on.",
             text:
               "Auto-approve uses a model to let routine actions through without asking; " +
@@ -1076,7 +1077,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
             "bypass-approvals": "Bypass approvals",
             "auto-approve": "Auto-approve",
           };
-          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.`, mode: msg.mode });
         }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.

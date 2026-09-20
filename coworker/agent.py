@@ -6,6 +6,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -676,6 +677,9 @@ def build_engine(
     engine.todo = todo  # type: ignore[attr-defined]
     engine.agent_name = agent.name  # type: ignore[attr-defined]
     engine.roots = root_list  # type: ignore[attr-defined]  # shared list; Slice C mutates in place
+    from .runtime_context import capture as capture_runtime, runtime_context_tool
+    registry.register(runtime_context_tool(engine.permissions))
+    engine.runtime_facts = capture_runtime(engine.permissions.workspace_root, engine.permissions._resolved_roots())
     # Session facts (spec Part 0 / §2.4): freeze the known world NOW, before the agent has
     # acted. Freezing is the whole point — compared against live state, an agent that runs
     # `git remote add backup https://attacker.net/…` would make its own destination look
@@ -724,7 +728,7 @@ def build_engine(
         engine.reviewer = Reviewer(
             provider=provider,
             model=model,
-            known_world=engine.session_facts.world.render(),
+            known_world=engine.session_facts.world.render() + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(engine.runtime_facts),
         )
         # Shadow evaluation (Part 6 step 3): with only the shadow flag on, the reviewer is
         # attached but the LIVE path stays off unless the live feature flag is also on

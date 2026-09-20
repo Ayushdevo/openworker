@@ -1037,6 +1037,7 @@ export function App() {
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
         case "mode_notice":
+          if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
           // explainer once per session ever, one-line markers for later switches.
           setItems((p) => [

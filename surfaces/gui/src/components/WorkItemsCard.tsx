@@ -70,15 +70,9 @@ export function WorkItemsCard({
         {item.summary && <p className="proposal-summary">{item.summary}</p>}
         <div className="proposal-meta">
           <span>{t("proposal.tasks", { count: item.items.length })}</span>
-          {item.activities?.map((activity) => (
-            <span key={activity.id}>
-              {
-                item.items.filter((task) => task.activity === activity.id)
-                  .length
-              }{" "}
-              {activity.title}
-            </span>
-          ))}
+          {!!item.activities?.length && <span>({item.activities.map((activity) =>
+            `${item.items.filter((task) => task.activity === activity.id).length} ${activity.title}`,
+          ).join(" · ")})</span>}
         </div>
         <div className="proposal-workstreams">
           {item.workstreams?.map((group) => {

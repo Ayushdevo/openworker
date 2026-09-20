@@ -30,6 +30,7 @@ export function approvalItemFromPayload(d: any): ApprovalItem {
     searchProvider: d.search_provider || undefined,
     provenance: d.provenance || undefined,
     reviewerUnsure: d.reviewer_unsure || undefined,
+    escalation: d.escalation || undefined,
     readonlyOk: !!d.readonly_ok,
     mcpDestination: d.mcp_destination || undefined,
     workerCall: d.worker_call && typeof d.worker_call === "object" && d.worker_call.tool ? d.worker_call : undefined,

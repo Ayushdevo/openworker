@@ -2883,11 +2883,6 @@ def create_app(manager: SessionManager) -> FastAPI:
                 )
                 async for event in events:
                     data = event.data
-                    if event.type is EventType.TEAM_PROPOSED:
-                        # Spec §11.6: the staffing card offers, per worker, the connectors
-                        # it COULD be given (declared ceiling ∩ connected) — computed here,
-                        # where the manager is at hand; the engine only knows the roster.
-                        data = {**data, **manager.team_card_extras(session_id, data.get("members") or [])}
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(

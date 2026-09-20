@@ -1185,10 +1185,10 @@ def test_set_mode_persists_notice_once_then_markers(tmp_path):
         assert ev["data"]["title"] == "Auto-approve is on."
         assert "uses a model" in ev["data"]["text"]
         ws.send_json({"type": "set_mode", "mode": "interactive"})
-        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on.", "mode": "interactive"}
         # Re-entering auto-approve: marker, never the banner again.
         ws.send_json({"type": "set_mode", "mode": "auto-approve"})
-        assert ws.receive_json()["data"] == {"text": "Auto-approve is on."}
+        assert ws.receive_json()["data"] == {"text": "Auto-approve is on.", "mode": "auto-approve"}
 
     engine = manager._engines["modes1"]
     kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
@@ -1214,7 +1214,7 @@ def test_connect_banners_a_session_already_in_auto_approve(tmp_path):
     with client.websocket_connect("/ws/session/modes2") as ws:
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "set_mode", "mode": "interactive"})
-        assert ws.receive_json()["data"] == {"text": "Ask for approval is on."}
+        assert ws.receive_json()["data"] == {"text": "Ask for approval is on.", "mode": "interactive"}
     engine = manager._engines["modes2"]
     kinds = [m.get("kind") for m in engine.messages if m.get("role") == "notice"]
     assert kinds.count("mode_notice") == 1

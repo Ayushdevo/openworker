@@ -161,12 +161,19 @@ def make_summary(manager, team, now):
         if p.session_id in session_ids and p.kind != "notification"
     ]
     # The lead decision and the original worker approval are one human interruption.
+    pending_ids = {p.id for p in prompts if p.state == "pending"}
     forwarded = {
         (p.data.get("arguments") or {}).get("call_id")
         for p in prompts
         if p.data.get("tool") == "decide_worker_call"
+        # Declining the lead's proposal need not answer the original worker.
+        # That still-pending request must become visible again.
+        and (p.state == "pending" or (p.data.get("arguments") or {}).get("call_id") not in pending_ids)
     }
     asks = []
+    pending_requests = []
+    by_session = {w.session_id: w.actor for w in team.workers}
+    represented = {w["prompt_id"] for w in waits.values()}
     for p in prompts:
         if p.id in forwarded:
             continue
@@ -199,6 +206,14 @@ def make_summary(manager, team, now):
                 ),
             }
         )
+        if p.state == "pending":
+            original = manager.inbox.get((p.data.get("arguments") or {}).get("call_id", "")) if p.data.get("tool") == "decide_worker_call" else p
+            pending_requests.append({
+                "id": p.id, "session_id": p.session_id,
+                "worker": by_session.get(original.session_id if original else p.session_id, team.lead_actor),
+                "title": p.title, "kind": kind,
+                "represented_by_task": bool(original and original.id in represented),
+            })
     ask_groups = {
         k: {
             "answered": sum(a["kind"] == k and a["state"] == "resolved" for a in asks),
@@ -435,6 +450,7 @@ def make_summary(manager, team, now):
         "workers": workers,
         "lead": lead,
         "counts": counts,
+        "pending_requests": pending_requests,
         "totals": {
             "done": counts["done"],
             "total": len(active),

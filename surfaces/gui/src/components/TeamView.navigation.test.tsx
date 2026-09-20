@@ -17,12 +17,15 @@ const calls = vi.hoisted(() => ({
   detail: vi.fn(),
   send: vi.fn(),
   interrupt: vi.fn(),
+  inbox: vi.fn(),
+  resolve: vi.fn(),
 }));
 vi.mock("../api", async (original) => ({
   ...(await original<typeof import("../api")>()),
   getBoardItem: calls.detail,
   getSessionMessages: calls.messages,
-  getInbox: async () => [],
+  getInbox: calls.inbox,
+  resolveInboxItem: calls.resolve,
   Session: class {
     constructor(id: string, _workspace: string, _role: string, handlers: any) {
       calls.connect(id);
@@ -35,6 +38,8 @@ vi.mock("../api", async (original) => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  calls.inbox.mockResolvedValue([]);
+  calls.resolve.mockResolvedValue({ ok: true });
   calls.messages.mockResolvedValue([
     { role: "assistant", content: "Worker session transcript." },
   ]);
@@ -51,6 +56,23 @@ beforeEach(() => {
   }));
 });
 afterEach(cleanup);
+
+it("shows and answers an unattributed worker request without inventing a task", async () => {
+  const summary = sampleTeam();
+  summary.counts.waiting = 0;
+  summary.pending_requests = [{ id: "ask", worker: "sam", session_id: "worker", title: "Run regression tests", kind: "approvals", represented_by_task: false }];
+  calls.inbox.mockResolvedValue([{ id: "ask", kind: "approval", session_id: "worker", title: "Run regression tests", body: "", state: "pending", data: { tool: "run_shell", arguments: { command: "npm test" }, escalation: { kind: "reviewer_unsure", reason: "Check scope" } } }]);
+  const refresh = vi.fn();
+  const view = render(<TeamView summary={summary} sessionId="lead" sessions={[]} onClose={vi.fn()} onRefresh={refresh} />);
+  expect(screen.getByText("Your answer is needed.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "sam · Run regression tests" }));
+  expect(await screen.findByTestId("approval-escalation")).toBeTruthy();
+  expect(calls.inbox).toHaveBeenCalledWith("worker", "pending");
+  fireEvent.click(screen.getByRole("button", { name: "Allow once", exact: true }));
+  await vi.waitFor(() => expect(calls.resolve).toHaveBeenCalledWith("ask", "allow"));
+  view.rerender(<TeamView summary={{ ...summary, pending_requests: [] }} sessionId="lead" sessions={[]} onClose={vi.fn()} onRefresh={refresh} />);
+  expect(screen.queryByTestId("inbox-item-ask")).toBeNull();
+});
 
 it("task detail loads the task timeline, never a worker transcript or socket", async () => {
   const s = sampleTeam();

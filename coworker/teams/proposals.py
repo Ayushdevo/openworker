@@ -26,7 +26,7 @@ EXTERNAL_ACTIONS = obj({
 })
 WORK_PROPOSAL_SCHEMA = obj({
     "title": TEXT, "summary": TEXT,
-    "targets": array(TEXT, 1, 20),
+    "targets": {**array(TEXT, 1, 20), "description": "Products, repositories, accounts, or environments in scope. Not implementation filenames; put those in individual task descriptions."},
     "external_actions": EXTERNAL_ACTIONS,
     "activities": array(GROUP, 1, 12),
     "workstreams": array(GROUP, 1, 24),
@@ -147,6 +147,8 @@ customer outcome (title, summary), explicit targets, domain-appropriate activiti
 workstreams (id/title/summary), and tasks keyed within this proposal. Categories do not
 imply sequencing: depends_on names actual prerequisite keys; verifies names tasks being
 independently checked. Criteria are 1–3 concise, testable statements, without a label.
+Targets name the product/repository/account/environment in scope, not implementation
+filenames. Put file ownership and implementation paths inside individual task descriptions.
 Name a real final_acceptance item and its owner (lead or assigned_worker).
 Declare external_actions explicitly: status none, planned, or undetermined; actions lists
 only concrete planned external actions, exclusions lists only explicit exclusions, and

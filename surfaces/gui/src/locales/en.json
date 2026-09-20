@@ -1,5 +1,6 @@
 {
   "proposal": {
+    "manage_connectors": "Manage connectors",
     "proposed_work": "Proposed work",
     "proposed_team": "Proposed team",
     "acceptance_criteria": "Acceptance criteria",
@@ -609,6 +610,9 @@
     "run_count_other": "{{count}} runs"
   },
   "approval": {
+    "escalation_reviewer_unsure": "Auto-approve needs your judgment:",
+    "escalation_human_required": "This action requires a human decision:",
+    "escalation_reviewer_unavailable": "Auto-approve could not review this action. Please decide.",
     "allow": "Allow",
     "allow_once": "Allow once",
     "deny": "Deny",
@@ -2296,6 +2300,8 @@
     }
   },
   "teamview": {
+    "pending_requests_one": "1 request needs your answer",
+    "pending_requests_other": "{{count}} requests need your answer",
     "worker_matches_one": "{{count}} matching worker",
     "roster_summary_one": "{{count}} needs attention · {{working}} working",
     "search_workers": "Find a worker…",

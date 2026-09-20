@@ -547,6 +547,8 @@ async def test_an_allow_and_a_manual_leads_denial_still_ask(tmp_path):
             return ApprovalOutcome.DENY
 
         engine = _lead_engine(tmp_path, mode, args, decided)
+        # The harness must resolve a real original action before allowing a proxy.
+        engine.delegated_approval = lambda _args: {"tool": "run_shell", "arguments": {"command": "git status"}, "context": {}, "reason": "requires approval"}
         engine.approver = deny  # the human says no: the lead's decision must not run
         events = await _run(engine)
         assert EventType.PERMISSION_REQUIRED in [e.type for e in events], (mode, decision)

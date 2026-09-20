@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApprovalEscalation } from "./ApprovalEscalation";
 import { getI18n, useTranslation } from "react-i18next";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
@@ -446,6 +447,8 @@ export function ApprovalCard({
       <WorkerDecisionCard
         decision={decision}
         workerCall={item.workerCall}
+        escalation={item.escalation}
+        reviewerUnsure={item.reviewerUnsure}
         compact={compact}
         onFollow={() => onApprove("once")}
         onOverride={() => {
@@ -459,7 +462,7 @@ export function ApprovalCard({
   const scope = scopeNote(item.name, item.args, item.category, item.mcpDestination);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
-  const reason = item.reason && item.reason !== "requires approval" ? item.reason : "";
+  const reason = item.reason && item.reason !== "requires approval" && item.reason !== item.escalation?.reason ? item.reason : "";
   const offerStanding = !!(runTask && item.standingTarget);
   const dock = compact ? " approval-dock" : "";
   // OPE-114 §1: the command text cannot tell you the agent wrote this file a moment ago.
@@ -470,11 +473,7 @@ export function ApprovalCard({
     </div>
   ) : null;
   // Quiet, not a warning: the reviewer hesitating is context, not danger.
-  const reviewerUnsure = item.reviewerUnsure ? (
-    <div className="text-meta text-muted mt-1" data-testid="approval-reviewer-unsure">
-      {t("approval.reviewer_unsure", { note: item.reviewerUnsure })}
-    </div>
-  ) : null;
+  const reviewerUnsure = <ApprovalEscalation escalation={item.escalation} reviewerUnsure={item.reviewerUnsure} />;
 
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).

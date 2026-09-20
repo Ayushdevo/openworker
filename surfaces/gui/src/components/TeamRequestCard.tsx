@@ -20,7 +20,7 @@
 // opens the ordinary per-worker rows for a human who wants to split the role (progressive
 // disclosure). A role whose workers differ says so on its line ("Mixed", "11 of 12")
 // rather than opening by itself. State and the answer stay per worker: grouping is a view.
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import type { TeamMemberDecision } from "../api";
 import type { Item } from "../types";
@@ -76,6 +76,7 @@ export function TeamRequestCard({
   const { t } = useTranslation();
   const [chat, setChat] = useState(!!item.enable_chat);
   const [noteOpen, setNoteOpen] = useState(false);
+  const rosterRef = useRef<HTMLDivElement>(null);
   const [names, setNames] = useState(() =>
     item.members.map((m) => m.name || ""),
   );
@@ -709,7 +710,7 @@ export function TeamRequestCard({
         )}
         {/* The roster scrolls inside the card; the header above and the decision below stay
           in view however many workers the lead proposes. */}
-        <div className="teamreq-roster" data-testid="teamreq-roster">
+        <div className="teamreq-roster" data-testid="teamreq-roster" ref={rosterRef}>
           {item.groups?.length
             ? item.groups.map((group) => {
                 const idxs = item.members
@@ -764,9 +765,21 @@ export function TeamRequestCard({
           className="proposal-access"
           data-testid="proposal-connector-summary"
         >
-          <span className="proposal-label">
-            {t("proposal.connector_access")}
-          </span>
+          <div className="proposal-access-heading">
+            <span className="proposal-label">{t("proposal.connector_access")}</span>
+            <button
+              className="teamreq-add"
+              data-testid="proposal-manage-connectors"
+              onClick={() => {
+                rosterRef.current?.querySelectorAll("details").forEach((group) => { group.open = true; });
+                setOpen(Object.fromEntries(groups.map((group) => [group.persona, true])));
+                setAdding(Object.fromEntries(item.members.map((_, i) => [i, true])));
+                rosterRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }}
+            >
+              {t("proposal.manage_connectors")}
+            </button>
+          </div>
           {[...new Set(Object.values(ticked).flat())].length ? (
             [...new Set(Object.values(ticked).flat())].map((connector) => (
               <span key={connector}>

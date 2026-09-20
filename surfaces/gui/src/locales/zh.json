@@ -1,5 +1,6 @@
 {
   "proposal": {
+    "manage_connectors": "管理连接器",
     "proposed_work": "工作提案",
     "proposed_team": "团队提案",
     "acceptance_criteria": "验收标准",
@@ -599,6 +600,9 @@
     "run_count_other": "{{count}} 次运行"
   },
   "approval": {
+    "escalation_reviewer_unsure": "自动批准需要您的判断：",
+    "escalation_human_required": "此操作必须由人工决定：",
+    "escalation_reviewer_unavailable": "自动批准无法审查此操作。请您决定。",
     "allow": "允许",
     "allow_once": "允许一次",
     "deny": "拒绝",
@@ -2256,6 +2260,8 @@
     }
   },
   "teamview": {
+    "pending_requests_one": "1 个请求需要你的回答",
+    "pending_requests_other": "{{count}} 个请求需要你的回答",
     "worker_matches_one": "{{count}} 位匹配成员",
     "roster_summary_one": "{{count}} 位需要关注 · {{working}} 位工作中",
     "search_workers": "查找成员…",

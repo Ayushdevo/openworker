@@ -161,6 +161,14 @@ export function sampleTeam(
 }
 export const teamViewStates: CardState[] = [
   {
+    id: "worker-request", title: "Worker request without a task", payload: { summary: {
+      ...sampleTeam(5, false),
+      totals: { ...sampleTeam(5, false).totals, asks_waiting: 1 },
+      asks: { ...sampleTeam(5, false).asks, approvals: { answered: 1, waiting: 1 } },
+      pending_requests: [{ id: "sample-request", session_id: "sample-worker", worker: "Sam", title: "Run local regression tests", kind: "approvals", represented_by_task: false }],
+    } },
+  },
+  {
     id: "working",
     title: "Five workers working",
     payload: { summary: sampleTeam(5, false) },

@@ -9,6 +9,7 @@
 // An older server sends none: the card still explains the decision and says the call
 // itself cannot be shown.
 import type { ReactNode } from "react";
+import { ApprovalEscalation, type Escalation } from "./ApprovalEscalation";
 import { getI18n, Trans, useTranslation } from "react-i18next";
 import { humanizeApprovalTitle } from "../humanize";
 import { PreviewBlock, TitleText } from "./ApprovalCard";
@@ -75,6 +76,8 @@ function distinctWorkerReason(call?: WorkerCall | null): string {
 export function WorkerDecisionCard({
   decision,
   workerCall,
+  escalation,
+  reviewerUnsure,
   onFollow,
   onOverride,
   compact = false,
@@ -83,6 +86,8 @@ export function WorkerDecisionCard({
 }: {
   decision: LeadDecision;
   workerCall?: WorkerCall | null;
+  escalation?: Escalation;
+  reviewerUnsure?: string;
   // Do what the lead decided / do the opposite. Both answer the worker's call.
   onFollow: () => void;
   onOverride: () => void;
@@ -99,7 +104,7 @@ export function WorkerDecisionCard({
   const args = workerCall?.arguments && typeof workerCall.arguments === "object" ? workerCall.arguments : {};
   const preview =
     typeof args.command === "string" ? args.command : typeof args.content === "string" ? args.content : "";
-  const workerReason = distinctWorkerReason(workerCall);
+  const workerReason = distinctWorkerReason(workerCall) === escalation?.reason ? "" : distinctWorkerReason(workerCall);
   return (
     <div
       className={bare ? "workerdec bare" : "approval workerdec" + (compact ? " approval-dock" : "")}
@@ -121,6 +126,7 @@ export function WorkerDecisionCard({
         <span className="approval-scope">{t("workerdec.scope", { worker })}</span>
       </div>
       {workerCall?.item_title && <p className="team-totals">{workerCall.item_title}</p>}
+      <ApprovalEscalation escalation={escalation} reviewerUnsure={reviewerUnsure} />
 
       <div className="workerdec-label">{t("workerdec.wants_to", { worker })}</div>
       {workerCall ? (

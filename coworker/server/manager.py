@@ -836,6 +836,7 @@ class SessionManager:
             auto_approve=self.auto_approve(),
             auto_approve_shadow=self.auto_approve_shadow(),
         )
+        engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
@@ -1116,7 +1117,7 @@ class SessionManager:
             from ..reviewer import Reviewer
             engine.reviewer = Reviewer(
                 provider=engine.provider, model=engine.model,
-                known_world=engine.session_facts.world.render() if engine.session_facts else "",
+                known_world=(engine.session_facts.world.render() if engine.session_facts else "") + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(getattr(engine, "runtime_facts", {})),
             )
 
     def sync_cached_reviewers(self) -> None:
@@ -5366,6 +5367,10 @@ class SessionManager:
             self.persist_session(session_id)
             self.reconcile_activity_receipts(session_id)
         data = message.get("data") or {}
+        if message.get("type") == "team_proposed":
+            message = {**message, "data": {**data, **self.team_card_extras(session_id, data.get("members") or [])}}
+        if message.get("type") == "mode_notice" and engine:
+            message = {**message, "data": {**data, "mode": engine.permissions.mode.value}}
         if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
             worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
             if worker_call:
@@ -5425,6 +5430,51 @@ class SessionManager:
         item = self.inbox.get(str(arguments.get("call_id") or ""))
         return item if member and item and item.kind == "approval" and item.session_id == member.session_id else None
 
+    def worker_review_context(self, lead_session: str, arguments: dict) -> dict:
+        """Resolve exactly one owned, pending call and carry its permission floors.
+
+        Read only harness state. No worker transcript, lead rationale, file contents,
+        or environment values are added to the reviewer's context.
+        """
+        from ..providers import ToolCall
+        item = self._owned_worker_prompt(lead_session, arguments)
+        if item is None or item.state != "pending":
+            return {"hard_deny": True, "reason": "The worker request is missing, belongs to another team, or was already answered."}
+        name = item.data.get("tool")
+        args = item.data.get("arguments")
+        if not isinstance(name, str) or not isinstance(args, dict) or name == "decide_worker_call":
+            return {"hard_deny": True, "reason": "The original worker action is invalid."}
+        worker = self.get_engine(item.session_id)
+        spec = worker.registry.get(name)
+        if spec is None:
+            return {"hard_deny": True, "reason": "The worker tool is no longer available."}
+        decision = worker.permissions.evaluate(name, args, spec.metadata)
+        call = ToolCall(id=item.id, name=name, arguments=args)
+        downloaded = worker._downloaded_target(call) is not None
+        # Preserve the floor recorded when the worker parked the call, even after
+        # an engine rebuild loses runtime-only provenance.
+        saved = item.data.get("escalation") or {}
+        human_only = decision.human_only or downloaded or saved.get("kind") == "human_required"
+        reason = (saved.get("reason") if saved.get("kind") == "human_required" else None) or (
+            "The worker would execute a downloaded file; a human must decide." if downloaded else decision.reason
+        )
+        return {
+            "tool": name, "arguments": args, "reason": reason,
+            "hard_deny": not decision.allowed and not decision.needs_user,
+            "human_only": human_only,
+            "provenance": item.data.get("provenance") or worker._provenance(call),
+            "context": {
+                "worker": arguments.get("worker"), "request_id": item.id,
+                "workspace": str(worker.permissions.workspace_root or ""),
+                "working_folders": [{"path": str(path), "writable": writable} for path, writable in worker.permissions._resolved_roots()],
+                "permission_reason": decision.reason, "mode": worker.permissions.mode.value,
+                "settings_epoch": worker.reviewer_settings_epoch,
+                "category": getattr(spec.metadata, "category", ""),
+                "destination": item.data.get("mcp_destination"),
+                "runtime_facts": getattr(worker, "runtime_facts", {}),
+            },
+        }
+
     def approval_prompt_data(self, session_id: str, request) -> dict[str, Any]:
         """Extra Inbox-item payload for a parked approval. Always carries the tool name +
         arguments so the GUI can render the same humanized card (§35) it shows live —
@@ -5437,6 +5487,8 @@ class SessionManager:
         data: dict[str, Any] = {
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
+            "escalation": getattr(request, "escalation", None),
+            "provenance": getattr(request, "provenance", ""),
         }
         if request.tool_name == "decide_worker_call":
             worker_call = self.worker_call_for(data["arguments"], lead_session=session_id)

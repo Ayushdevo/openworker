@@ -3,6 +3,11 @@ import type { CardState } from "../types";
 
 export const approvalStates: CardState[] = [
   {
+    id: "human-required", title: "A mandatory human decision", context: { mode: "auto-approve" },
+    payload: { name: "write_file", arguments: { path: ".github/workflows/check.yml", content: "name: Check\non: push\n" },
+      reason: "Protected project configuration", escalation: { kind: "human_required", reason: "This file executes in CI. A person must approve changes." } },
+  },
+  {
     id: "shell-command",
     title: "Shell command",
     note: "The common case in Manual mode: the command-scoped grant is offered, the tool-wide one is not.",
@@ -34,6 +39,7 @@ export const approvalStates: CardState[] = [
       arguments: { command: "python3 helper.py" },
       reason: "requires approval",
       reviewer_unsure: "This runs a newly created script whose effects cannot be determined from the command.",
+      escalation: { kind: "reviewer_unsure", reason: "This runs a newly created script whose effects cannot be determined from the command." },
     },
   },
   {

@@ -179,6 +179,7 @@ export type Item =
       // The Auto-Approve reviewer answered `unsure` and raised this card: its one-line
       // reason, rendered quietly so "why am I being asked?" is answered in place.
       reviewerUnsure?: string;
+      escalation?: import("./components/ApprovalEscalation").Escalation;
       // Server-classified: this shell command only reads locally, so the card may offer
       // the session-wide "Allow read-only commands" grant.
       readonlyOk?: boolean;

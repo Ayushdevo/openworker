@@ -16,6 +16,16 @@ const state = (id: string) => STATES["worker-decision"].find((s) => s.id === id)
 describe("WorkerDecisionCard", () => {
   afterEach(cleanup);
 
+  it.each(["reviewer_unsure", "human_required"] as const)("keeps the %s explanation on live and parked lead cards", (kind) => {
+    const escalation = { kind, reason: "The exact action needs your judgment." };
+    const payload = { ...statePayload("worker-decision", "lead-allows-command"), escalation };
+    const view = render(<ApprovalCard item={approvalItemFromPayload(payload)} onApprove={vi.fn()} />);
+    expect(screen.getByTestId("approval-escalation").textContent).toContain(escalation.reason);
+    view.unmount();
+    render(<InboxItemCard item={{ id: "sample", kind: "approval", session_id: "lead", title: "Approval", body: "", state: "pending", created_at: "", data: { ...payload, tool: "decide_worker_call" } } as any} onResolve={vi.fn()} />);
+    expect(screen.getByTestId("approval-escalation").textContent).toContain(escalation.reason);
+  });
+
   it.each(["", "This requires access to the project directory.\n"])("does not repeat generated command summaries, retaining policy text (%s)", policy => {
     const command = "cd /workspace/acme/billing-service && npm run build && npm run test -- --run";
     render(<WorkerDecisionCard decision={{ worker: "Maya", callId: "call", decision: "allow", note: "Verify the build." }}

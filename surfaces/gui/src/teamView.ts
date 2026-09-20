@@ -50,6 +50,7 @@ export interface TeamSummary {
   items: TeamTask[];
   workers: TeamWorker[];
   lead: TeamWorker;
+  pending_requests?: { id: string; session_id: string; worker: string; title: string; kind: string; represented_by_task: boolean }[];
   counts: Record<Exclude<TeamGroup, "canceled">, number>;
   totals: {
     done: number;

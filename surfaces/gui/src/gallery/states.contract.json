@@ -3,8 +3,428 @@
   "cards": {
     "team-view": {
       "event": "team summary",
-      "canonical": "working",
+      "canonical": "worker-request",
       "states": {
+        "worker-request": {
+          "summary": {
+            "team_id": "sample-team-5",
+            "space": "/workspace/acme/billing-service",
+            "lead_session": "scn-team-view-5",
+            "workers": [
+              {
+                "actor": "sam",
+                "role": "swe-worker",
+                "session_id": "scn-team-view-5-sam",
+                "model": "sample-model",
+                "workspace": "/workspace/acme/billing-service",
+                "running": true,
+                "tokens": {
+                  "input": 200,
+                  "cache_read": 800,
+                  "output": 160,
+                  "cache_write": 40
+                },
+                "items": [
+                  1
+                ]
+              },
+              {
+                "actor": "maya",
+                "role": "test-worker",
+                "session_id": "scn-team-view-5-maya",
+                "model": "sample-model",
+                "workspace": "/workspace/acme/billing-service",
+                "running": true,
+                "tokens": {
+                  "input": 210,
+                  "cache_read": 840,
+                  "output": 168,
+                  "cache_write": 42
+                },
+                "items": [
+                  2
+                ]
+              },
+              {
+                "actor": "builder-2",
+                "role": "swe-worker",
+                "session_id": "scn-team-view-5-builder-2",
+                "model": "sample-model",
+                "workspace": "/workspace/acme/billing-service",
+                "running": true,
+                "tokens": {
+                  "input": 220,
+                  "cache_read": 880,
+                  "output": 176,
+                  "cache_write": 44
+                },
+                "items": [
+                  3
+                ]
+              },
+              {
+                "actor": "reviewer-1",
+                "role": "reviewer",
+                "session_id": "scn-team-view-5-reviewer-1",
+                "model": "sample-model",
+                "workspace": "/workspace/acme/billing-service",
+                "running": false,
+                "tokens": {
+                  "input": 230,
+                  "cache_read": 920,
+                  "output": 184,
+                  "cache_write": 46
+                },
+                "items": [
+                  4
+                ]
+              },
+              {
+                "actor": "writer-1",
+                "role": "design-worker",
+                "session_id": "scn-team-view-5-writer-1",
+                "model": "sample-model",
+                "workspace": "/workspace/acme/billing-service",
+                "running": false,
+                "tokens": {
+                  "input": 240,
+                  "cache_read": 960,
+                  "output": 192,
+                  "cache_write": 48
+                },
+                "items": [
+                  5
+                ]
+              }
+            ],
+            "lead": {
+              "actor": "lead",
+              "role": "lead",
+              "session_id": "scn-team-view-5",
+              "model": "sample-model",
+              "workspace": "/workspace/acme/billing-service",
+              "running": false,
+              "tokens": {
+                "input": 600,
+                "cache_read": 2400,
+                "output": 480,
+                "cache_write": 120
+              },
+              "items": []
+            },
+            "items": [
+              {
+                "id": 1,
+                "title": "Fix refund rounding",
+                "description": "Check the invoice refund behavior against the approved criteria.",
+                "criteria": "Regression tests pass; the reviewer verifies the result.",
+                "state": "in_progress",
+                "group": "working",
+                "assignee": "sam",
+                "creator": "lead",
+                "refs": [],
+                "links": [],
+                "status": "Running regression tests · 18 of 24 passed",
+                "updated": 1790000000,
+                "created_ts": "2026-09-21T13:31:20.000Z",
+                "elapsed_s": 2520,
+                "worker_session": "scn-team-view-5-sam",
+                "step": {
+                  "done": 1,
+                  "total": 4
+                },
+                "tokens": {
+                  "input": 200,
+                  "cache_read": 800,
+                  "output": 160,
+                  "cache_write": 40
+                },
+                "timing": {
+                  "model_ms": 540000,
+                  "tool_ms": 840000,
+                  "waited_ms": 180000,
+                  "queued_ms": 960000
+                }
+              },
+              {
+                "id": 2,
+                "title": "Verify refund paths",
+                "description": "Check the invoice refund behavior against the approved criteria.",
+                "criteria": "Regression tests pass; the reviewer verifies the result.",
+                "state": "in_progress",
+                "group": "working",
+                "assignee": "maya",
+                "creator": "lead",
+                "refs": [],
+                "links": [],
+                "status": "Running regression tests · 18 of 24 passed",
+                "updated": 1789999940,
+                "created_ts": "2026-09-21T13:31:20.000Z",
+                "elapsed_s": 2520,
+                "worker_session": "scn-team-view-5-maya",
+                "step": {
+                  "done": 1,
+                  "total": 4
+                },
+                "tokens": {
+                  "input": 210,
+                  "cache_read": 840,
+                  "output": 168,
+                  "cache_write": 42
+                },
+                "timing": {
+                  "model_ms": 540000,
+                  "tool_ms": 840000,
+                  "waited_ms": 180000,
+                  "queued_ms": 960000
+                }
+              },
+              {
+                "id": 3,
+                "title": "Backfill affected invoices",
+                "description": "Check the invoice refund behavior against the approved criteria.",
+                "criteria": "Regression tests pass; the reviewer verifies the result.",
+                "state": "review",
+                "group": "review",
+                "assignee": "builder-2",
+                "creator": "lead",
+                "refs": [
+                  "https://github.com/acme/billing-service/pull/42"
+                ],
+                "links": [],
+                "status": "",
+                "updated": 1789999880,
+                "created_ts": "2026-09-21T13:31:20.000Z",
+                "elapsed_s": 2520,
+                "worker_session": "scn-team-view-5-builder-2",
+                "pr": "https://github.com/acme/billing-service/pull/42",
+                "tokens": {
+                  "input": 220,
+                  "cache_read": 880,
+                  "output": 176,
+                  "cache_write": 44
+                },
+                "timing": {
+                  "model_ms": 540000,
+                  "tool_ms": 840000,
+                  "waited_ms": 180000,
+                  "queued_ms": 960000
+                }
+              },
+              {
+                "id": 4,
+                "title": "Review the rounding fix",
+                "description": "Check the invoice refund behavior against the approved criteria.",
+                "criteria": "Regression tests pass; the reviewer verifies the result.",
+                "state": "open",
+                "group": "queued",
+                "assignee": "reviewer-1",
+                "creator": "lead",
+                "refs": [],
+                "links": [],
+                "status": "",
+                "updated": 1789999820,
+                "created_ts": "2026-09-21T13:31:20.000Z",
+                "elapsed_s": 2520,
+                "worker_session": "scn-team-view-5-reviewer-1",
+                "tokens": {
+                  "input": 230,
+                  "cache_read": 920,
+                  "output": 184,
+                  "cache_write": 46
+                },
+                "timing": {
+                  "model_ms": 540000,
+                  "tool_ms": 840000,
+                  "waited_ms": 180000,
+                  "queued_ms": 960000
+                }
+              },
+              {
+                "id": 5,
+                "title": "Update the refund runbook",
+                "description": "Check the invoice refund behavior against the approved criteria.",
+                "criteria": "Regression tests pass; the reviewer verifies the result.",
+                "state": "done",
+                "group": "done",
+                "assignee": "writer-1",
+                "creator": "lead",
+                "refs": [],
+                "links": [],
+                "status": "",
+                "updated": 1789999760,
+                "created_ts": "2026-09-21T13:31:20.000Z",
+                "elapsed_s": 2520,
+                "worker_session": "scn-team-view-5-writer-1",
+                "tokens": {
+                  "input": 240,
+                  "cache_read": 960,
+                  "output": 192,
+                  "cache_write": 48
+                },
+                "timing": {
+                  "model_ms": 540000,
+                  "tool_ms": 840000,
+                  "waited_ms": 180000,
+                  "queued_ms": 960000
+                }
+              }
+            ],
+            "counts": {
+              "waiting": 0,
+              "review": 1,
+              "working": 2,
+              "queued": 1,
+              "done": 1
+            },
+            "totals": {
+              "done": 1,
+              "total": 5,
+              "elapsed_s": 2520,
+              "tokens": 10200,
+              "tokens_by_kind": {
+                "input": 1700,
+                "cache_read": 6800,
+                "output": 1360,
+                "cache_write": 340
+              },
+              "asks_answered": 2,
+              "asks_waiting": 1
+            },
+            "timing": {
+              "model_ms": 2700000,
+              "tool_ms": 4200000,
+              "waited_ms": 900000,
+              "queued_ms": 4800000
+            },
+            "asks": {
+              "approvals": {
+                "answered": 1,
+                "waiting": 1
+              },
+              "staffing": {
+                "answered": 1,
+                "waiting": 0
+              },
+              "questions": {
+                "answered": 0,
+                "waiting": 0
+              },
+              "reviews": {
+                "answered": 0,
+                "waiting": 0
+              },
+              "grants": {
+                "answered": 0,
+                "waiting": 0
+              }
+            },
+            "median_answer_s": 240,
+            "generated_at": 1790000000,
+            "usage_points": [
+              {
+                "ts": 1789997600,
+                "role": "lead",
+                "tokens": 1200
+              },
+              {
+                "ts": 1789997600,
+                "role": "swe-worker",
+                "tokens": 400
+              },
+              {
+                "ts": 1789997600,
+                "role": "test-worker",
+                "tokens": 420
+              },
+              {
+                "ts": 1789997600,
+                "role": "swe-worker",
+                "tokens": 440
+              },
+              {
+                "ts": 1789997600,
+                "role": "reviewer",
+                "tokens": 460
+              },
+              {
+                "ts": 1789997600,
+                "role": "design-worker",
+                "tokens": 480
+              },
+              {
+                "ts": 1789998400,
+                "role": "lead",
+                "tokens": 1200
+              },
+              {
+                "ts": 1789998400,
+                "role": "swe-worker",
+                "tokens": 400
+              },
+              {
+                "ts": 1789998400,
+                "role": "test-worker",
+                "tokens": 420
+              },
+              {
+                "ts": 1789998400,
+                "role": "swe-worker",
+                "tokens": 440
+              },
+              {
+                "ts": 1789998400,
+                "role": "reviewer",
+                "tokens": 460
+              },
+              {
+                "ts": 1789998400,
+                "role": "design-worker",
+                "tokens": 480
+              },
+              {
+                "ts": 1789999200,
+                "role": "lead",
+                "tokens": 1200
+              },
+              {
+                "ts": 1789999200,
+                "role": "swe-worker",
+                "tokens": 400
+              },
+              {
+                "ts": 1789999200,
+                "role": "test-worker",
+                "tokens": 420
+              },
+              {
+                "ts": 1789999200,
+                "role": "swe-worker",
+                "tokens": 440
+              },
+              {
+                "ts": 1789999200,
+                "role": "reviewer",
+                "tokens": 460
+              },
+              {
+                "ts": 1789999200,
+                "role": "design-worker",
+                "tokens": 480
+              }
+            ],
+            "pending_requests": [
+              {
+                "id": "sample-request",
+                "session_id": "sample-worker",
+                "worker": "Sam",
+                "title": "Run local regression tests",
+                "kind": "approvals",
+                "represented_by_task": false
+              }
+            ]
+          }
+        },
         "working": {
           "summary": {
             "team_id": "sample-team-5",
@@ -8448,8 +8868,20 @@
     },
     "approval": {
       "event": "permission_required",
-      "canonical": "shell-command",
+      "canonical": "human-required",
       "states": {
+        "human-required": {
+          "name": "write_file",
+          "arguments": {
+            "path": ".github/workflows/check.yml",
+            "content": "name: Check\non: push\n"
+          },
+          "reason": "Protected project configuration",
+          "escalation": {
+            "kind": "human_required",
+            "reason": "This file executes in CI. A person must approve changes."
+          }
+        },
         "shell-command": {
           "name": "run_shell",
           "arguments": {
@@ -8472,7 +8904,11 @@
             "command": "python3 helper.py"
           },
           "reason": "requires approval",
-          "reviewer_unsure": "This runs a newly created script whose effects cannot be determined from the command."
+          "reviewer_unsure": "This runs a newly created script whose effects cannot be determined from the command.",
+          "escalation": {
+            "kind": "reviewer_unsure",
+            "reason": "This runs a newly created script whose effects cannot be determined from the command."
+          }
         },
         "provenance-warning": {
           "name": "run_shell",
@@ -8567,6 +9003,34 @@
         }
       },
       "inbox": {
+        "human-required": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `write_file`?",
+          "body": "Protected project configuration",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "write_file",
+            "arguments": {
+              "path": ".github/workflows/check.yml",
+              "content": "name: Check\non: push\n"
+            },
+            "escalation": {
+              "kind": "human_required",
+              "reason": "This file executes in CI. A person must approve changes."
+            },
+            "provenance": ""
+          }
+        },
         "shell-command": {
           "id": "gallery-item",
           "session_id": "gallery-session",
@@ -8586,7 +9050,9 @@
             "tool": "run_shell",
             "arguments": {
               "command": "npm test -- --run invoices"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "read-only-command": {
@@ -8608,7 +9074,9 @@
             "tool": "run_shell",
             "arguments": {
               "command": "ls"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "reviewer-unsure": {
@@ -8630,7 +9098,12 @@
             "tool": "run_shell",
             "arguments": {
               "command": "python3 helper.py"
-            }
+            },
+            "escalation": {
+              "kind": "reviewer_unsure",
+              "reason": "This runs a newly created script whose effects cannot be determined from the command."
+            },
+            "provenance": ""
           }
         },
         "provenance-warning": {
@@ -8652,7 +9125,9 @@
             "tool": "run_shell",
             "arguments": {
               "command": "python3 scripts/backfill_pdf_keys.py --apply"
-            }
+            },
+            "escalation": null,
+            "provenance": "backfill_pdf_keys.py was created by the agent 3 steps ago"
           }
         },
         "write-file": {
@@ -8675,7 +9150,9 @@
             "arguments": {
               "path": "src/fetch_data.py",
               "content": "import json\nimport urllib.request\n\ncompanies = [\"NVDA\", \"AMD\"]\nprint(len(companies))\ndone = True"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "web-fetch": {
@@ -8697,7 +9174,9 @@
             "tool": "web_fetch",
             "arguments": {
               "url": "https://docs.stripe.com/api/invoices/object"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "connector-action": {
@@ -8722,7 +9201,9 @@
               "title": "Invoice PDF download",
               "base": "main",
               "head": "lead/invoice-pdf"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "automation-run": {
@@ -8746,6 +9227,8 @@
               "target": "slack:T1/C1",
               "text": "Weekly digest ready"
             },
+            "escalation": null,
+            "provenance": "",
             "task_id": "task-7f2c",
             "task_title": "Weekly digest",
             "standing_target": "slack:T1/C1"
@@ -8771,7 +9254,9 @@
             "arguments": {
               "target": "slack:T1/C1",
               "text": "aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. aisuite — last 24 hours of work (through Jul 15): 5 PRs merged covering chat-completion streaming with unified chunks across providers, multimodal input conversion, Slack collaboration improvements, human attribution for outbound posts, and repo-wide formatting. "
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "automation-consent": {
@@ -8807,7 +9292,9 @@
                   "access": "read"
                 }
               ]
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "long-command": {
@@ -8829,7 +9316,9 @@
             "tool": "run_shell",
             "arguments": {
               "command": "set -euo pipefail\ncd infra\nterraform init -backend-config=envs/demo.backend.hcl\nterraform plan -var-file=envs/demo.tfvars -out=plan.bin\nterraform show -json plan.bin > plan.json\njq '[.resource_changes[] | select(.change.actions | index(\"delete\"))] | length' plan.json\nterraform apply plan.bin"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         },
         "minimal": {
@@ -8851,7 +9340,9 @@
             "tool": "run_shell",
             "arguments": {
               "command": "ls"
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         }
       }
@@ -12427,8 +12918,32 @@
     },
     "worker-decision": {
       "event": "permission_required (decide_worker_call)",
-      "canonical": "lead-denies-command",
+      "canonical": "reviewer-escalation",
       "states": {
+        "reviewer-escalation": {
+          "name": "decide_worker_call",
+          "arguments": {
+            "worker": "Sam",
+            "call_id": "c51dc4bd79f74e87b7fc59050dc41c37",
+            "decision": "allow",
+            "note": "Run the local verification."
+          },
+          "reason": "requires approval",
+          "category": "team",
+          "escalation": {
+            "kind": "reviewer_unsure",
+            "reason": "The command's target needs your confirmation."
+          },
+          "provenance": "",
+          "worker_call": {
+            "worker": "Sam",
+            "tool": "run_shell",
+            "arguments": {
+              "command": "npm test"
+            },
+            "state": "pending"
+          }
+        },
         "lead-denies-command": {
           "name": "decide_worker_call",
           "arguments": {
@@ -12542,6 +13057,45 @@
         }
       },
       "inbox": {
+        "reviewer-escalation": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `decide_worker_call`?",
+          "body": "requires approval\nworker: Sam · call_id: c51dc4bd79f74e87b7fc59050dc41c37 · decision: allow",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "decide_worker_call",
+            "arguments": {
+              "worker": "Sam",
+              "call_id": "c51dc4bd79f74e87b7fc59050dc41c37",
+              "decision": "allow",
+              "note": "Run the local verification."
+            },
+            "escalation": {
+              "kind": "reviewer_unsure",
+              "reason": "The command's target needs your confirmation."
+            },
+            "provenance": "",
+            "worker_call": {
+              "worker": "Sam",
+              "tool": "run_shell",
+              "arguments": {
+                "command": "npm test"
+              },
+              "state": "pending"
+            },
+            "worker_prompt_id": "c51dc4bd79f74e87b7fc59050dc41c37"
+          }
+        },
         "lead-denies-command": {
           "id": "gallery-item",
           "session_id": "gallery-session",
@@ -12565,6 +13119,8 @@
               "decision": "deny",
               "note": "That targets the issue-1 worktree, which is already done and merged (PR #2). Your item is #3: work in the issue-3 worktree only."
             },
+            "escalation": null,
+            "provenance": "",
             "worker_call": {
               "worker": "nia",
               "tool": "run_shell",
@@ -12601,6 +13157,8 @@
               "decision": "allow",
               "note": "This is the red-green check the item asks for: remove the fix, see the test fail, put it back. It stays inside the issue-3 worktree."
             },
+            "escalation": null,
+            "provenance": "",
             "worker_call": {
               "worker": "checks",
               "tool": "run_shell",
@@ -12636,6 +13194,8 @@
               "decision": "deny",
               "note": "The item is the Export button only. Rewriting the shared API client is outside it, and nia is editing the same file."
             },
+            "escalation": null,
+            "provenance": "",
             "worker_call": {
               "worker": "omar",
               "tool": "write_file",
@@ -12671,6 +13231,8 @@
               "decision": "deny",
               "note": "That targets the issue-1 worktree, which is already done and merged (PR #2)."
             },
+            "escalation": null,
+            "provenance": "",
             "worker_call": {
               "worker": "nia",
               "tool": "run_shell",
@@ -12706,6 +13268,8 @@
               "decision": "deny",
               "note": "Three problems. First, it runs in the issue-1 worktree, which is merged; your item lives in issue-3. Second, it pipes a script from the network into the shell, which the item never asked for and which I cannot review from here. Third, the build it triggers would overwrite the dist folder that checks is using for the UI test right now. Re-run the build inside issue-3/web with the plain npm script instead, and tell me if that script is missing."
             },
+            "escalation": null,
+            "provenance": "",
             "worker_call": {
               "worker": "nia",
               "tool": "run_shell",
@@ -12739,7 +13303,9 @@
               "call_id": "c51dc4bd79f74e87b7fc59050dc41c37",
               "decision": "deny",
               "note": "That targets the issue-1 worktree, which is already done and merged (PR #2)."
-            }
+            },
+            "escalation": null,
+            "provenance": ""
           }
         }
       }

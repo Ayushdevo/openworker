@@ -20,7 +20,7 @@ describe("structured proposal cards", () => {
       />,
     );
     expect(screen.getByTestId("itemsreq-card").textContent).toContain(
-      "7 Build",
+      "(7 Build · 3 Verify · 1 Accept)",
     );
     expect(screen.getAllByText("Acceptance criteria")).toHaveLength(11);
     expect(
@@ -40,7 +40,7 @@ describe("structured proposal cards", () => {
     expect(
       screen.getByTestId("proposal-external-actions").textContent,
     ).toContain("Run authenticated checks against sandbox-1");
-    expect(screen.getByText("2 Assess")).toBeTruthy();
+    expect(screen.getByText(/\(2 Assess ·/)).toBeTruthy();
     expect(screen.queryByText("None planned")).toBeNull();
   });
 
@@ -110,5 +110,17 @@ describe("structured proposal cards", () => {
     expect(screen.getByRole("alert")).toBeTruthy();
     fireEvent.click(screen.getByTestId("teamreq-approve"));
     expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("manages per-worker connectors even when the lead suggests none", () => {
+    const respond = vi.fn();
+    Element.prototype.scrollIntoView = vi.fn();
+    render(<TeamRequestCard item={teamItemFromPayload({ ...launchTeam, other_connected: ["github"] })} onRespond={respond} />);
+    fireEvent.click(screen.getByTestId("proposal-manage-connectors"));
+    expect(screen.getByTestId("teamreq-row-0").closest("details")?.open).toBe(true);
+    fireEvent.click(screen.getByTestId("teamreq-connector-0-github"));
+    fireEvent.click(screen.getByTestId("teamreq-approve"));
+    expect(respond.mock.calls[0][3][0].connectors).toEqual(["github"]);
+    expect(respond.mock.calls[0][3][1].connectors).toEqual([]);
   });
 });

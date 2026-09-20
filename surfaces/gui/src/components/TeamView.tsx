@@ -896,11 +896,12 @@ export function TeamView({
             <>
               <h2>
                 <Headline
-                  count={summary.counts.waiting}
+                  count={summary.pending_requests?.some((r) => !r.represented_by_task) ? 0 : summary.counts.waiting}
                   asks={summary.totals.asks_waiting}
                 />
               </h2>
               <TeamTotals summary={summary} />
+              {!!summary.pending_requests?.length && <PendingTeamRequests requests={summary.pending_requests} onRefresh={onRefresh} />}
               {!summary.totals.total && <p>{t("teamview.no_tasks")}</p>}
               {GROUPS.map((group) => {
                 const tasks = summary.items.filter((i) => i.group === group);
@@ -955,6 +956,34 @@ export function TeamView({
       )}
     </section>
   );
+}
+
+function PendingTeamRequests({ requests, onRefresh }: {
+  requests: NonNullable<TeamSummary["pending_requests"]>;
+  onRefresh: () => void;
+}) {
+  const { t } = useTranslation();
+  const [opened, setOpened] = useState<InboxItem | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (opened && !requests.some((r) => r.id === opened.id)) setOpened(null);
+  }, [requests, opened]);
+  return <section data-testid="team-pending-requests">
+    <h3 className="team-group-heading">{t("teamview.pending_requests", { count: requests.length })}</h3>
+    {requests.map((request) => <button key={request.id} className="team-task-row" onClick={async () => {
+      setError("");
+      try {
+        const items = await getInbox(request.session_id, "pending");
+        setOpened(items.find((item) => item.id === request.id) || null);
+        onRefresh();
+      } catch { setError(t("teamview.load_error")); }
+    }}><span className="board-dot blocked" aria-hidden="true" /><span className="team-task-main">{request.worker} · {request.title}</span><Icon name="chevronRight" size={14} /></button>)}
+    {error && <p role="alert">{error}</p>}
+    {opened && <InboxItemCard item={opened} onResolve={async (id, answer) => {
+      try { await resolveInboxItem(id, answer); setOpened(null); onRefresh(); }
+      catch { setError(t("teamview.action_error")); }
+    }} />}
+  </section>;
 }
 
 function TaskDetailPane({

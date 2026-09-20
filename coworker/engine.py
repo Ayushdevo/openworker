@@ -13,6 +13,7 @@ engine says `needs_user`, the engine emits `PERMISSION_REQUIRED` and awaits the 
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 
 import asyncio
 import json
@@ -105,6 +106,8 @@ class PermissionRequest:
     # registration) — carried on the request so a PARKED approval shows the same
     # destination evidence as the live card (§35 parity). None for non-MCP tools.
     mcp_destination: Optional[dict] = None
+    escalation: Optional[dict] = None
+    provenance: str = ""
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -267,6 +270,10 @@ class TurnEngine:
         self.approval_extras: Optional[
             Callable[[str, dict[str, Any]], dict[str, Any]]
         ] = None
+        # Harness-resolved original action for a lead's permission proxy. Never
+        # derived from the lead's note or another agent's conversation.
+        self.delegated_approval: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
+        self._authorized_delegates: dict[str, dict] = {}
         # What the agent itself created this session (OPE-114 §1). The reviewer never sees
         # file contents, so `python scripts/setup.py` is unjudgeable from its text — but the
         # engine knows whether it wrote or downloaded that file moments ago, and says so on
@@ -394,6 +401,7 @@ class TurnEngine:
         # everything else that turn to the human. A fresh user message is a fresh brief.
         self._reviewer_denials = 0
         self._reviewer_verdicts.clear()
+        self._authorized_delegates.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
@@ -1250,6 +1258,9 @@ class TurnEngine:
         interactive = {"request_directory", "propose_plan", "ask_user"}
         pending: list[ToolCall] = []
         for tool_call in tool_calls:
+            # Resolve parked worker calls at authorization time, not speculatively.
+            if tool_call.name == "decide_worker_call":
+                continue
             if tool_call.name in interactive or tool_call.id in self._reviewer_verdicts:
                 continue
             spec = self.registry.get(tool_call.name)
@@ -1296,6 +1307,20 @@ class TurnEngine:
         if verdict is not None:
             return verdict
         request, history = self._user_history()
+        delegated = self._delegated_context(tool_call)
+        if delegated:
+            from .reviewer import Verdict
+            if delegated.get("hard_deny") or delegated.get("human_only"):
+                return Verdict("unsure", delegated["reason"])
+            verdict = await self.reviewer.review(
+                request=request, history=history,
+                tool_name=delegated["tool"], arguments=delegated["arguments"],
+                provenance=delegated.get("provenance", ""),
+                action_context=delegated["context"],
+            )
+            if delegated != self._delegated_context(tool_call):
+                return Verdict("unsure", "The worker request or its permissions changed during review. Review the current request.")
+            return verdict
         return await self.reviewer.review(
             request=request,
             history=history,
@@ -1303,6 +1328,20 @@ class TurnEngine:
             arguments=tool_call.arguments,
             provenance=self._provenance(tool_call),
         )
+
+    def _delegated_context(self, tool_call: ToolCall) -> dict | None:
+        if tool_call.name != "decide_worker_call" or str(tool_call.arguments.get("decision", "")).lower().strip() != "allow":
+            return None
+        try:
+            if self.delegated_approval:
+                result = self.delegated_approval(tool_call.arguments)
+                if isinstance(result, dict) and result.get("hard_deny"):
+                    return deepcopy(result)
+                if isinstance(result, dict) and isinstance(result.get("tool"), str) and isinstance(result.get("arguments"), dict) and isinstance(result.get("context"), dict):
+                    return deepcopy(result)
+        except Exception:
+            pass
+        return {"hard_deny": True, "reason": "The original worker request cannot be verified."}
 
     @staticmethod
     def _action_key(tool_name: str, arguments: dict[str, Any] | None) -> tuple[str, str]:
@@ -1351,6 +1390,10 @@ class TurnEngine:
         no code path from a shadow verdict to a decision."""
         if self.reviewer is None or not self.reviewer_shadow:
             return
+        if tool_call.name == "decide_worker_call":
+            # Only the current, resolved action can be reviewed. This proxy uses
+            # the on-demand live path; never send just its ID to the shadow judge.
+            return
         request, history = self._user_history()
         prov = self._provenance(tool_call)
 
@@ -1398,6 +1441,11 @@ class TurnEngine:
         decision = self.permissions.evaluate(
             tool_call.name, tool_call.arguments, metadata
         )
+        delegated = self._delegated_context(tool_call)
+        if delegated and delegated.get("hard_deny"):
+            decision = replace(decision, allowed=False, needs_user=False, reason=delegated["reason"])
+        elif delegated and delegated.get("human_only") and (decision.allowed or decision.needs_user):
+            decision = replace(decision, allowed=False, needs_user=True, human_only=True, reason=delegated["reason"])
         allowed = decision.allowed
         reason = decision.reason
 
@@ -1569,6 +1617,11 @@ class TurnEngine:
                 unsure_note = verdict.reason
 
         if not allowed and decision.needs_user:
+            escalation = (
+                {"kind": "human_required", "reason": decision.reason} if decision.human_only else
+                {"kind": "reviewer_unsure", "reason": unsure_note} if unsure_note else
+                {"kind": "reviewer_unavailable", "reason": ""} if self.permissions.mode is Mode.AUTO_APPROVE else None
+            )
             # Shadow evaluation: record what the reviewer would have said about this card.
             # Skipped when the live path already consulted it (an `unsure` falling through
             # to the card is already audited as reviewer_verdict — no double spend).
@@ -1580,6 +1633,7 @@ class TurnEngine:
                     "name": tool_call.name,
                     "arguments": tool_call.arguments,
                     "reason": decision.reason,
+                    "escalation": escalation,
                     # An `unsure` verdict raised this card: the reviewer's one-line reason
                     # answers "why am I being asked?" in place (owner ask 2026-08-24).
                     **(
@@ -1639,6 +1693,8 @@ class TurnEngine:
                         metadata=metadata,
                         reason=decision.reason,
                         tool_call_id=tool_call.id,
+                        escalation=escalation,
+                        provenance=provenance_note,
                         mcp_destination=(
                             getattr(spec.func, "__coworker_mcp_destination__", None)
                             if spec
@@ -1716,6 +1772,9 @@ class TurnEngine:
                     reason=reason,
                 )
 
+        if allowed and delegated and delegated != self._delegated_context(tool_call):
+            allowed, reason = False, "The worker request or its permissions changed. Request a fresh decision."
+
         if not allowed:
             if spec is None:
                 reason = f"unknown tool: {tool_call.name}"
@@ -1749,12 +1808,17 @@ class TurnEngine:
             yield False
             return
 
+        if delegated:
+            self._authorized_delegates[tool_call.id] = delegated
         yield True
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
         started, clock = time.time(), time.monotonic()
         try:
+            delegated = self._authorized_delegates.pop(tool_call.id, None)
+            if delegated and delegated != self._delegated_context(tool_call):
+                return {"error": "The worker request or its permissions changed before execution. Request a fresh decision."}, "error"
             return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
