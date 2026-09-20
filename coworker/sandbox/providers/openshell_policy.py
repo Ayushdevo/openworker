@@ -12,6 +12,8 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional, Sequence
 
+from .. import network_profiles
+
 RUNNER_MOUNT = "/opt/openworker"
 RUNTIME_DIR = "/tmp"  # the runner's socket and HOME live here; always read-write
 
@@ -38,23 +40,14 @@ def _hosts(name: str, hosts: Sequence[str]) -> dict[str, Any]:
     return {"name": name, "endpoints": [{"host": h, "port": 443} for h in hosts], "binaries": [dict(b) for b in _ANY_BINARY]}
 
 
-_CODE_HOSTS = _hosts(
-    "code-hosts",
-    ["github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com", "raw.githubusercontent.com", "gitlab.com"],
-)
-_PACKAGES = _hosts(
-    "package-registries",
-    ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "proxy.golang.org", "sum.golang.org"],
-)
-_SEARCH = _hosts("search-apis", ["api.search.brave.com", "api.tavily.com", "html.duckduckgo.com", "duckduckgo.com"])
-
+# The host lists are ours and shared by every provider (network_profiles.py); here they are
+# only put into OpenShell's shape. Policy keys use underscores.
+_POLICY_KEYS = {"code-hosts": "code_hosts", "package-registries": "packages", "search-apis": "search"}
 PROFILES: dict[str, dict[str, dict[str, Any]]] = {
-    # git and package registries: enough to clone, install and push.
-    "strict": {"code_hosts": _CODE_HOSTS, "packages": _PACKAGES},
-    # plus the search APIs.
-    "standard": {"code_hosts": _CODE_HOSTS, "packages": _PACKAGES, "search": _SEARCH},
+    profile: {_POLICY_KEYS[name]: _hosts(name, hosts) for name, hosts in groups.items()}
+    for profile, groups in network_profiles.PROFILES.items()
 }
-DEFAULT_PROFILE = "strict"
+DEFAULT_PROFILE = network_profiles.DEFAULT_PROFILE
 
 
 def render(
