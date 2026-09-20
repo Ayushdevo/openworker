@@ -247,7 +247,17 @@ def configured_opening(event, thread_target: str, folder: str) -> str:
     if body:
         lines.append(f"Description:\n{body}")
     if folder:
-        lines.append(f"Your session folder is a checkout of the code under review: {folder}")
+        lines.append(
+            f"Your session directory is {folder}. No repository or worktree was created. "
+            "If local code is needed, use github_clone in this directory; otherwise work through the connector."
+        )
+    is_pr = bool(frame.get("is_pr")) or kind in ("pr_open", "pr_merge")
+    if is_pr and number.isdigit():
+        lines.append(
+            f"PR source: refs/pull/{number}/head. For review, clone with this ref, not the default branch. "
+            "Record the returned full commit SHA; this is the fetched revision, not necessarily the event-time revision. "
+            "For post-merge work, inspect the PR's merge commit and target branch through GitHub first."
+        )
     src = getattr(event, "source", None)
     if src is not None:
         lines.append(origin_block(src, frame={**frame, "kind": kind}))
@@ -576,6 +586,11 @@ class SessionManager:
     def _provision_scratch(self, session_id: str) -> str:
         """Create (idempotently) and return this conversation's scratch directory."""
         d = self.scratch_base() / session_id
+        record = self.session_store.load(session_id)
+        team = (record.team if record else {}) or {}
+        lead = str(team.get("lead_session") or "")
+        if team.get("role") == "worker" and self._SESSION_ID_RE.fullmatch(lead) and lead not in {".", "..", session_id}:
+            d = self.scratch_base() / lead / "workers" / session_id
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
 
@@ -766,6 +781,17 @@ class SessionManager:
             else:
                 # A session id we won't put in a filesystem path: primary root only.
                 roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
+            team = (record.team if record else {}) or {}
+            if team.get("role") == "worker":
+                lead = self.session_store.load(str(team.get("lead_session") or ""))
+                if lead is not None:
+                    # Shared team filesystem, with a worker-owned directory for worktrees.
+                    for path, label in (
+                        (self._provision_scratch(lead.session_id), "team scratch"),
+                        (self._provision_scratch(session_id), "worker scratch"),
+                    ):
+                        if not any(Path(r["path"]).resolve() == Path(path).resolve() for r in roots):
+                            roots.append({"path": path, "writable": True, "label": label})
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -2968,6 +2994,7 @@ class SessionManager:
                     "session_id": w.session_id,
                     "connectors": sorted(self.effective_connectors(w.session_id, w.persona)),
                     "approvals": "follow the lead",
+                    "scratch_directory": self._provision_scratch(w.session_id),
                 }
                 for w in workers
             ],
@@ -6092,6 +6119,12 @@ class SessionManager:
                         )
                     return
                 self._report_orphan_subscription(channel)
+                if cfg:
+                    self.unrouted.record(
+                        src.target, who, text,
+                        reason=f"target session {target} is missing — select an existing session; no replacement was started",
+                    )
+                    return
             subs = self.subscriptions.for_channel(channel)
             # §31 mention router: a direct @-mention of the bot outranks the passive fan-out —
             # subscribed sessions must answer it; an unsubscribed channel spawns (or steers)
@@ -6361,56 +6394,8 @@ class SessionManager:
                 logger.warning("reply-only frame for %s failed: %s", src.chat_id, getattr(res, "error", ""))
         except Exception:
             logger.exception("reply-only frame for %s failed", src.chat_id)
-
-    def _prepare_checkout(self, owner_repo: str, base_dir: str, *, number: str, kind: str, head_ref: str = "", worktree: bool = True, is_pr: bool | None = None) -> str:
-        """The folder a configuration-started session works in (spec §10.4).
-        Clone once at <base>/<repo>/main; with `worktree`, add <base>/<repo>/pr-N
-        (or issue-N) on the PR head, else the default branch. Returns the path.
-        Raises ValueError with a readable reason."""
-        from ..connectors.integration_tools import _github_git_auth_args, _github_git_base, _run_git
-
-        if "/" not in owner_repo:
-            raise ValueError(f"not a repository: {owner_repo!r}")
-        owner, repo = owner_repo.split("/", 1)
-        root = Path(base_dir).expanduser()
-        try:
-            root = ensure_under_base(root, "base directory")
-        except OutsideBaseDir as exc:
-            raise ValueError(str(exc)) from None
-        clone = root / repo / "main"
-        auth = _github_git_auth_args(self.secrets, owner)
-        if not (clone / ".git").exists():
-            clone.parent.mkdir(parents=True, exist_ok=True)
-            _out, err = _run_git([*auth, "clone", f"{_github_git_base()}/{owner}/{repo}.git", str(clone)])
-            if err:
-                raise ValueError(f"clone failed: {err}")
-        else:
-            _run_git([*auth, "-C", str(clone), "fetch", "--prune", "origin"])
-        if not worktree:
-            return str(clone)
-        # A PR thread (opened, merged, or a mention on one) checks the PR head out;
-        # an issue works on the default branch.
-        pr = bool(is_pr) if is_pr is not None else kind in ("pr_open", "pr_merge")
-        tag = f"pr-{number}" if pr and number else (f"issue-{number}" if number else "work")
-        path = root / repo / tag
-        if path.exists():
-            return str(path)
-        if pr and number and kind != "pr_merge":
-            # The PR head by number works whether or not the branch name is known.
-            _out, err = _run_git([*auth, "-C", str(clone), "fetch", "origin", f"pull/{number}/head:refs/remotes/origin/{tag}"])
-            if err:
-                raise ValueError(f"fetch of PR #{number} failed: {err}")
-            start = f"origin/{tag}"
-        else:
-            head, err = _run_git(["-C", str(clone), "rev-parse", "--abbrev-ref", "HEAD"])
-            start = f"origin/{head}" if head else "HEAD"
-        _out, err = _run_git(["-C", str(clone), "worktree", "add", "-B", tag, str(path), start])
-        if err:
-            raise ValueError(f"worktree failed: {err}")
-        return str(path)
-
     def _remove_spawn_worktree(self, session_id: str, record=None) -> None:
-        """A configuration-started session's worktree goes with it; the clone stays."""
+        """Legacy harness-owned checkouts only; agent-owned work is never removed here."""
         from ..connectors.integration_tools import _run_git
 
         record = record if record is not None else self.session_store.load(session_id)
@@ -6428,7 +6413,7 @@ class SessionManager:
 
     async def _spawn_configured_session(self, event, ms: MessageSource, cfg: dict) -> None:
         """A configuration's "new session" target (spec §10.4): coworker, first
-        runnable model, a checkout when a base directory was set, the listed
+        runnable model, a fresh directory (never an automatic checkout), the listed
         skills, the instructions — then the opening turn."""
         import uuid
 
@@ -6444,28 +6429,20 @@ class SessionManager:
         number = str(frame.get("number") or "")
         kind = str(cfg.get("event") or frame.get("kind") or "")
         owner_repo = str(frame.get("owner_repo") or src.chat_id.split("#", 1)[0])
+        sid = uuid.uuid4().hex
         workspace = None
-        clone = worktree = ""
         base_dir = str(spawn.get("base_dir") or "")
         if base_dir:
             try:
-                path = await asyncio.to_thread(
-                    self._prepare_checkout,
-                    owner_repo,
-                    base_dir,
-                    number=number,
-                    kind=kind,
-                    head_ref=str(frame.get("head_ref") or ""),
-                    worktree=bool(spawn.get("worktree", True)),
-                    is_pr=frame.get("is_pr") if "is_pr" in frame else None,
-                )
-            except ValueError as exc:
-                self.unrouted.record(src.target, who, event.text, reason=f"checkout failed: {exc}")
+                root = ensure_under_base(Path(base_dir).expanduser(), "base directory")
+                path = root / sid
+                path.mkdir(parents=True, exist_ok=False)
+            except (ValueError, OSError) as exc:
+                self.unrouted.record(src.target, who, event.text, reason=f"session directory failed: {exc}")
                 return
-            workspace = path
-            clone = str(Path(path).parent / "main") if bool(spawn.get("worktree", True)) else path
-            worktree = path if bool(spawn.get("worktree", True)) else ""
-        sid = uuid.uuid4().hex
+            workspace = str(path.resolve())
+        else:
+            workspace = self._provision_scratch(sid)
         engine = self.get_engine(sid, workspace=workspace, agent=persona)
         if engine is None:
             self.unrouted.record(src.target, who, event.text, reason="could not start the configured session (folder needed?)")
@@ -6502,8 +6479,7 @@ class SessionManager:
                 "event": kind,
                 "name": str(cfg.get("name") or ""),
                 "instructions": str(spawn.get("instructions") or ""),
-                "clone": clone,
-                "worktree": worktree,
+                "workspace_setup": "agent",
                 "owner_repo": owner_repo,
                 "number": number,
                 "approval_mode": mode.value,

@@ -68,7 +68,7 @@ it("shows and answers an unattributed worker request without inventing a task", 
   fireEvent.click(screen.getByRole("button", { name: "sam · Run regression tests" }));
   expect(await screen.findByTestId("approval-escalation")).toBeTruthy();
   expect(calls.inbox).toHaveBeenCalledWith("worker", "pending");
-  fireEvent.click(screen.getByRole("button", { name: "Allow once", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
   await vi.waitFor(() => expect(calls.resolve).toHaveBeenCalledWith("ask", "allow"));
   view.rerender(<TeamView summary={{ ...summary, pending_requests: [] }} sessionId="lead" sessions={[]} onClose={vi.fn()} onRefresh={refresh} />);
   expect(screen.queryByTestId("inbox-item-ask")).toBeNull();

@@ -1824,6 +1824,8 @@
     "default_coworker": "默认同事",
     "default_coworker_lower": "默认同事",
     "target_in_dir": "位于 {{dir}}",
+    "target_session_under": "会话目录位于 {{dir}} 下",
+    "session_directory_hint": "每个新会话都有独立目录。留空则使用临时工作区。协作者自行决定是否通过 GitHub 连接器克隆仓库；系统不会自动创建检出目录。",
     "target_worktree_under": "worktree 位于 {{dir}} 下",
     "target_mode_to_inbox": "{{mode}} → 收件箱",
     "all_repos": "所有仓库",

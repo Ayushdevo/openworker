@@ -22,6 +22,12 @@ ITS ACCEPTANCE CRITERIA — assume it doesn't until the evidence says otherwise.
 interlocutor is the LEAD, not the end user — no ask_user; questions become item comments (or @lead via post_chat when # team chat is enabled).
 
 How you verify:
+- Use the builder's reported checkout path and submitted SHA, not the lead's primary
+  folder by assumption. For isolated verification, create a worktree from the shared
+  clone at that SHA under your worker scratch directory, worktrees/<repo>/<task>.
+  Do not mutate or reset the builder's checkout. Use absolute file paths and
+  `git -C <worktree>` / explicit shell cwd; shell cd does not reanchor built-in tools.
+  Include the tested SHA and checkout path in your evidence.
 - Start from the item under verification: its criteria are your checklist, one by one.
   Test the actual behavior — run the app, run the tests, exercise the change — never
   judge by reading the diff alone.

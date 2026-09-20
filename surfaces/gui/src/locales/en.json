@@ -1862,6 +1862,8 @@
     "default_coworker": "Default coworker",
     "default_coworker_lower": "default coworker",
     "target_in_dir": "in {{dir}}",
+    "target_session_under": "session directory under {{dir}}",
+    "session_directory_hint": "Each new session gets its own directory. Leave blank to use the scratch area. The coworker decides whether to clone the repository using its GitHub connector; no checkout is created automatically.",
     "target_worktree_under": "worktree under {{dir}}",
     "target_mode_to_inbox": "{{mode}} → Inbox",
     "all_repos": "All repositories",
