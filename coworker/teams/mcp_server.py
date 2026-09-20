@@ -132,6 +132,14 @@ def build(dialect, *, space: str):
         so they are not re-delivered."""
         return _safe(lambda: (dialect.consume(space, upto_seq), {"ok": True})[1])
 
+    if role == "worker":
+
+        @mcp.tool()
+        def board_set_status(item: int, text: str) -> Any:
+            """Set one display-only progress line (at most 80 characters) on an item
+            currently assigned to you. Does not change state or wake the lead."""
+            return _safe(dialect.set_status, space, item, text)
+
     if role in ("lead", "user"):
 
         @mcp.tool()

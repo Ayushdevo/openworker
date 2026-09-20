@@ -985,6 +985,12 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         return _board(request, run)
 
+    @app.post("/v1/board/items/status")
+    def board_set_status(request: Request, body: dict):
+        return _board(request, lambda actor: manager.team_store.set_status(
+            str(body.get("space", "")), actor, body.get("id"), body.get("text")
+        ))  # Display-only: deliberately no team tick.
+
     @app.post("/v1/board/items/claim")
     def board_claim_item(request: Request, body: dict):
         body = body or {}

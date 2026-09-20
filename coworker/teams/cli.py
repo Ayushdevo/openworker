@@ -78,6 +78,10 @@ def _parser() -> argparse.ArgumentParser:
     p = cmd("claim", _cmd_claim, "claim an open, unassigned item for yourself")
     p.add_argument("id", type=int)
 
+    p = cmd("set-status", _cmd_set_status, "set a short progress line on your assigned item (worker only)")
+    p.add_argument("id", type=int)
+    p.add_argument("text")
+
     p = cmd("move", _cmd_move, "transition an item")
     p.add_argument("id", type=int)
     p.add_argument("to", choices=_STATES[1:] + ("open",))
@@ -300,6 +304,12 @@ def _cmd_create(args) -> int:
         case=args.case or None,
     )
     print(json.dumps(item, indent=2) if args.json else f"created #{item['id']}")
+    return 0
+
+
+def _cmd_set_status(args) -> int:
+    item = _dialect(args).set_status(_space(args), args.id, args.text)
+    print(json.dumps(item) if args.json else item["status"])
     return 0
 
 

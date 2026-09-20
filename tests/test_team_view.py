@@ -1,4 +1,5 @@
 """Team View contracts: status ownership, quiet delivery, projections and timing."""
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -6,7 +7,13 @@ from types import SimpleNamespace
 import pytest
 from coworker.teams import Actor, AuthorityError, BoardError, Role, TeamStore
 from coworker.teams.store import ITEM_STATUS, WORKER_WAITING
-from coworker.teams.summary import all_events, breakdown, waiting_items, tokens, make_summary
+from coworker.teams.summary import (
+    all_events,
+    breakdown,
+    waiting_items,
+    tokens,
+    make_summary,
+)
 from coworker.teams.tools import board_tools, with_mention
 from coworker.teams.registry import TeamRegistry, TeamWorker
 from coworker.inbox import InboxStore
@@ -26,7 +33,9 @@ def store(tmp_path):
 
 
 def assigned(store):
-    item = store.create_item("acme", LEAD, title="Invoice PDF", criteria="Download verified")
+    item = store.create_item(
+        "acme", LEAD, title="Invoice PDF", criteria="Download verified"
+    )
     return store.assign("acme", LEAD, item["id"], WORKER.id)
 
 
@@ -96,14 +105,29 @@ def test_mention_escapes_markdown_and_does_not_mutate():
 
 
 def test_role_filtered_tool_surface(store):
-    assert "set_status" in {t.__name__ for t in board_tools(store, space="acme", actor=WORKER)}
-    assert "set_status" not in {t.__name__ for t in board_tools(store, space="acme", actor=LEAD)}
+    assert "set_status" in {
+        t.__name__ for t in board_tools(store, space="acme", actor=WORKER)
+    }
+    assert "set_status" not in {
+        t.__name__ for t in board_tools(store, space="acme", actor=LEAD)
+    }
 
 
 def test_waiting_requires_a_current_pending_prompt():
     inbox = InboxStore()
     p = inbox.add_approval("worker-session", "Run tests")
-    events = [{"kind": WORKER_WAITING, "item_id": 2, "actor": "sam", "payload": {"prompt_id": p.id, "session_id": "worker-session", "tool": "run_shell"}}]
+    events = [
+        {
+            "kind": WORKER_WAITING,
+            "item_id": 2,
+            "actor": "sam",
+            "payload": {
+                "prompt_id": p.id,
+                "session_id": "worker-session",
+                "tool": "run_shell",
+            },
+        }
+    ]
     items = [{"id": 2, "assignee": "sam", "state": "in_progress"}]
     assert 2 in waiting_items(events, inbox, items)
     inbox.resolve(p.id, "allow")
@@ -111,18 +135,24 @@ def test_waiting_requires_a_current_pending_prompt():
 
 
 def test_parallel_time_is_wall_clock_union():
-    result = breakdown([(0, 5, "tool_ms"), (2, 8, "tool_ms"), (8, 9, "model_ms")], 0, 10)
+    result = breakdown(
+        [(0, 5, "tool_ms"), (2, 8, "tool_ms"), (8, 9, "model_ms")], 0, 10
+    )
     assert result == dict(model_ms=1000, tool_ms=8000, waited_ms=0, queued_ms=1000)
     assert sum(result.values()) == 10000
 
 
 def test_waiting_has_priority_and_intervals_are_clipped():
-    result = breakdown([(-5, 20, "model_ms"), (3, 6, "waited_ms"), (2, 7, "tool_ms")], 0, 10)
+    result = breakdown(
+        [(-5, 20, "model_ms"), (3, 6, "waited_ms"), (2, 7, "tool_ms")], 0, 10
+    )
     assert result == dict(model_ms=5000, tool_ms=2000, waited_ms=3000, queued_ms=0)
 
 
 def test_usage_is_normalized_defensively():
-    assert tokens(dict(input=-1, output="12", cache_read=None, cache_write="bad")) == dict(input=0, output=12, cache_read=0, cache_write=0)
+    assert tokens(
+        dict(input=-1, output="12", cache_read=None, cache_write="bad")
+    ) == dict(input=0, output=12, cache_read=0, cache_write=0)
 
 
 def test_event_reader_paginates(store):
@@ -134,13 +164,51 @@ def test_event_reader_paginates(store):
 def test_real_manager_summary_and_current_wait(tmp_path, monkeypatch):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(workspace=tmp_path / "repo", data_dir=tmp_path / "data")
-    manager.session_store.save(SessionRecord(session_id="lead-session", workspace=str(tmp_path / "repo"), model="sample", mode="interactive", agent="swe-lead"))
-    team = manager.teams.create(space=manager._board_space("lead-session"), lead_session="lead-session", lead_actor="lead", workers=[TeamWorker(actor="sam", persona="swe-worker", session_id="worker-session")])
-    item = manager.team_store.create_item(team.space, LEAD, title="Invoice PDF", criteria="Verified")
+    manager.session_store.save(
+        SessionRecord(
+            session_id="lead-session",
+            workspace=str(tmp_path / "repo"),
+            model="sample",
+            mode="interactive",
+            agent="swe-lead",
+        )
+    )
+    team = manager.teams.create(
+        space=manager._board_space("lead-session"),
+        lead_session="lead-session",
+        lead_actor="lead",
+        workers=[
+            TeamWorker(actor="sam", persona="swe-worker", session_id="worker-session")
+        ],
+    )
+    item = manager.team_store.create_item(
+        team.space, LEAD, title="Invoice PDF", criteria="Verified"
+    )
     manager.team_store.assign(team.space, LEAD, item["id"], WORKER.id)
     manager.team_store.transition(team.space, WORKER, item["id"], "in_progress")
     manager.team_store.set_status(team.space, WORKER, item["id"], "Running tests")
-    manager.session_store.save(SessionRecord(session_id="worker-session", workspace=str(tmp_path / "repo"), model="sample", mode="interactive", agent="swe-worker", messages=[{"role": "assistant", "content": "Testing", "ts": 10, "usage": {"input": 10, "cache_read": 20, "output": 5, "cache_write": 2}}]))
+    manager.session_store.save(
+        SessionRecord(
+            session_id="worker-session",
+            workspace=str(tmp_path / "repo"),
+            model="sample",
+            mode="interactive",
+            agent="swe-worker",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "Testing",
+                    "ts": 10,
+                    "usage": {
+                        "input": 10,
+                        "cache_read": 20,
+                        "output": 5,
+                        "cache_write": 2,
+                    },
+                }
+            ],
+        )
+    )
     summary = manager.team_summary(team.team_id)
     assert summary["items"][0]["status"] == "Running tests"
     assert summary["totals"]["tokens"] == 37
@@ -152,8 +220,11 @@ def test_real_manager_summary_and_current_wait(tmp_path, monkeypatch):
 
 def test_engine_records_and_strips_timing(tmp_path):
     from test_engine import _engine, _tool_turn, _text_turn, _collect
+
     (tmp_path / "sample.txt").write_text("sample")
-    engine, _ = _engine(tmp_path, [_tool_turn("read_file", {"path": "sample.txt"}), _text_turn("Read")])
+    engine, _ = _engine(
+        tmp_path, [_tool_turn("read_file", {"path": "sample.txt"}), _text_turn("Read")]
+    )
     _collect(engine, "read")
     model = next(m for m in engine.messages if m["role"] == "assistant")
     tool = next(m for m in engine.messages if m["role"] == "tool")
@@ -165,23 +236,88 @@ def test_engine_records_and_strips_timing(tmp_path):
 def test_call_after_review_is_not_attributed_to_the_previous_item():
     events = [
         {"seq": 1, "ts": 1, "kind": "item_created", "item_id": 1, "payload": {}},
-        {"seq": 2, "ts": 10, "kind": "item_assigned", "item_id": 1, "payload": {"assignee": "sam"}},
-        {"seq": 3, "ts": 20, "kind": "item_transitioned", "item_id": 1, "payload": {"to": "review"}},
-        {"seq": 4, "ts": 30, "kind": "item_transitioned", "item_id": 1, "payload": {"to": "done"}},
+        {
+            "seq": 2,
+            "ts": 10,
+            "kind": "item_assigned",
+            "item_id": 1,
+            "payload": {"assignee": "sam"},
+        },
+        {
+            "seq": 3,
+            "ts": 20,
+            "kind": "item_transitioned",
+            "item_id": 1,
+            "payload": {"to": "review"},
+        },
+        {
+            "seq": 4,
+            "ts": 30,
+            "kind": "item_transitioned",
+            "item_id": 1,
+            "payload": {"to": "done"},
+        },
     ]
-    item = {"id": 1, "title": "Task", "created_ts": 1, "creator": "lead", "assignee": "sam", "state": "done", "refs": [], "links": []}
-    worker = SessionRecord(session_id="worker", workspace="acme", model="sample", mode="interactive", messages=[
-        {"role": "assistant", "ts": 29, "usage": {"input": 100}, "timing": {"model_started": 25, "model_ms": 10000}}
-    ])
+    item = {
+        "id": 1,
+        "title": "Task",
+        "created_ts": 1,
+        "creator": "lead",
+        "assignee": "sam",
+        "state": "done",
+        "refs": [],
+        "links": [],
+    }
+    worker = SessionRecord(
+        session_id="worker",
+        workspace="acme",
+        model="sample",
+        mode="interactive",
+        messages=[
+            {
+                "role": "assistant",
+                "ts": 29,
+                "usage": {"input": 100},
+                "timing": {"model_started": 25, "model_ms": 10000},
+            }
+        ],
+    )
     manager = SimpleNamespace(
         session_board=lambda sid: {"items": [item]},
-        team_store=SimpleNamespace(events=lambda space, since_seq, limit: [e for e in events if e["seq"] > since_seq]),
-        inbox=InboxStore(), _engines={}, is_running=lambda sid: False,
-        session_store=SimpleNamespace(load=lambda sid: worker if sid == "worker" else None),
+        team_store=SimpleNamespace(
+            events=lambda space, since_seq, limit: [
+                e for e in events if e["seq"] > since_seq
+            ]
+        ),
+        inbox=InboxStore(),
+        _engines={},
+        is_running=lambda sid: False,
+        session_store=SimpleNamespace(
+            load=lambda sid: worker if sid == "worker" else None
+        ),
     )
-    team = SimpleNamespace(lead_session="lead", lead_actor="lead", team_id="t", space="acme", created_at=1,
-                           workers=[TeamWorker(actor="sam", persona="swe-worker", session_id="worker")])
+    team = SimpleNamespace(
+        lead_session="lead",
+        lead_actor="lead",
+        team_id="t",
+        space="acme",
+        created_at=1,
+        workers=[TeamWorker(actor="sam", persona="swe-worker", session_id="worker")],
+    )
     result = make_summary(manager, team, 40)
     assert result["items"][0]["timing"] is None
     assert sum(result["items"][0]["tokens"].values()) == 0
     assert result["totals"]["tokens"] == 100
+
+
+def test_chart_bucketing_preserves_all_tokens_by_role():
+    from coworker.teams.summary import compact_usage_points
+
+    points = [
+        {"ts": n, "role": "lead" if n % 2 else "swe-worker", "tokens": 3}
+        for n in range(10000)
+    ]
+    result = compact_usage_points(points)
+    assert len(result) <= 240
+    assert sum(p["tokens"] for p in result) == 30000
+    assert sum(p["tokens"] for p in result if p["role"] == "lead") == 15000

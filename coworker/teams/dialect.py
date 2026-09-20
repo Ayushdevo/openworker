@@ -77,6 +77,7 @@ class BoardDialect(Protocol):
     ) -> dict[str, Any]: ...
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]: ...
     def claim(self, space: str, item_id: int) -> dict[str, Any]: ...
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]: ...
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]: ...
     def attach(
         self,
@@ -201,6 +202,9 @@ class LocalDialect:
 
     def claim(self, space: str, item_id: int) -> dict[str, Any]:
         return self.store.claim(space, self.actor, item_id)
+
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]:
+        return self.store.set_status(space, self.actor, item_id, text)
 
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]:
         return self.store.link(space, self.actor, src, kind, dst)
@@ -433,6 +437,9 @@ class RemoteDialect:
 
     def claim(self, space: str, item_id: int) -> dict[str, Any]:
         return self._post("/v1/board/items/claim", {"space": space, "id": item_id})
+
+    def set_status(self, space: str, item_id: int, text: str) -> dict[str, Any]:
+        return self._post("/v1/board/items/status", {"space": space, "id": item_id, "text": text})
 
     def link(self, space: str, src: int, kind: str, dst: int) -> dict[str, Any]:
         return self._post(
