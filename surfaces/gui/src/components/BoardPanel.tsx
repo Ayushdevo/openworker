@@ -381,17 +381,29 @@ function AttachmentThumb({
   const [url, setUrl] = useState<string | null>(null);
   const stored = refString.slice("attachment://".length).split("#")[0];
   const name = refString.includes("#") ? refString.split("#").pop()! : stored;
+  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(stored);
   useEffect(() => {
     let created: string | null = null;
+    let disposed = false;
     void loadAttachment(stored).then((u) => {
+      if (disposed) {
+        if (u) URL.revokeObjectURL(u);
+        return;
+      }
       created = u;
       setUrl(u);
     });
     return () => {
+      disposed = true;
       if (created) URL.revokeObjectURL(created);
     };
   }, [stored, loadAttachment]);
   if (!url) return null;
+  if (!isImage) return (
+    <a href={url} download={name} className="text-ui text-accent underline underline-offset-2" data-testid="board-file-attachment">
+      {name}
+    </a>
+  );
   return (
     <a className="board-shot" href={url} target="_blank" rel="noreferrer" title={name}>
       <img src={url} alt={name} data-testid="board-attachment" />

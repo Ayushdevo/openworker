@@ -22,6 +22,30 @@ test("plain sessions carry zero board chrome", async ({ page }) => {
   await expect(page.getByText("Echo: hello")).toBeVisible();
   await expect(page.getByTestId("rail-toggle-board")).toHaveCount(0);
 });
+
+test("published reports are downloadable evidence alongside screenshots", async ({ page }) => {
+  const stored = "a".repeat(64) + ".md";
+  await page.route("**/board/item?*", async route => {
+    await route.fulfill({ json: {
+      id: 5, title: "Verify billing", description: "", criteria: "Independent evidence", state: "review",
+      assignee: "maya", creator: "lead", refs: [], links: [],
+      timeline: [{ seq: 100, ts: new Date().toISOString(), actor: "maya", kind: "comment",
+        body: "Acceptance report", refs: [`attachment://${stored}#findings.md`] }],
+    } });
+  });
+  await page.route("**/board/attachment?*", route => route.fulfill({
+    contentType: "text/plain", body: "# Acceptance\nAll criteria passed on the submitted revision.\n",
+  }));
+  await planTheWork(page);
+  await openTask(page, 5);
+  const link = page.getByTestId("board-file-attachment");
+  await expect(link).toHaveText("findings.md");
+  await expect(page.getByTestId("board-detail").getByRole("img")).toHaveCount(0);
+  const downloaded = page.waitForEvent("download");
+  await link.click();
+  expect((await downloaded).suggestedFilename()).toBe("findings.md");
+  await page.screenshot({ path: "test-results/board-file-artifact.png" });
+});
 test("standalone boards remain accessible while the full-window overlay is retired", async ({
   page,
 }) => {

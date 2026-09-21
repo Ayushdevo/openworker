@@ -11,8 +11,8 @@ twice stores once), immutability by construction (the ref can never dangle onto
 changed bytes), and independence from agent workspaces. Boards and their attachment
 store stay on this machine; cross-machine sync is not implemented.
 
-Scope is images-only and ~10MB to start; the allowlist is the policy choke point
-when that widens.
+Images and inert report formats are bounded to 10MB. Publication never executes
+or renders active document content.
 """
 
 from __future__ import annotations
@@ -39,6 +39,9 @@ _IMAGE_TYPES = {
     "gif": "image/gif",
     "webp": "image/webp",
 }
+_TEXT_TYPES = {"txt": "text/plain", "md": "text/plain", "log": "text/plain",
+               "csv": "text/plain", "json": "text/plain"}
+_FILE_TYPES = {**_IMAGE_TYPES, **_TEXT_TYPES, "pdf": "application/pdf"}
 
 _MAGIC = {
     "png": b"\x89PNG\r\n\x1a\n",
@@ -94,10 +97,17 @@ class AttachmentStore:
         return path
 
     def mime_for(self, stored: str) -> str:
-        return _IMAGE_TYPES.get(stored.rsplit(".", 1)[-1], "application/octet-stream")
+        return _FILE_TYPES.get(stored.rsplit(".", 1)[-1], "application/octet-stream")
 
 
 def read_image_file(path: str | Path, *, roots=None) -> tuple[bytes, str]:
+    data, name = read_attachment_file(path, roots=roots)
+    if Path(name).suffix.lower().lstrip(".") not in _IMAGE_TYPES:
+        raise BoardError("attach_image requires an image; use attach_file for reports")
+    return data, name
+
+
+def read_attachment_file(path: str | Path, *, roots=None) -> tuple[bytes, str]:
     """Read a bounded regular file. Agent callers MUST supply current granted roots.
 
     None is reserved for operator CLI/MCP callers with their own filesystem access;
@@ -153,11 +163,23 @@ def _validate(data: bytes, filename: str) -> str:
             f"attachment exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB"
         )
     ext = Path(filename).suffix.lstrip(".").lower()
-    if ext not in _IMAGE_TYPES:
+    if ext not in _FILE_TYPES:
         raise BoardError(
-            f"unsupported attachment type .{ext or '?'} — images only for now"
-            f" ({', '.join(sorted(set(_IMAGE_TYPES)))})"
+            f"unsupported attachment type .{ext or '?'}"
+            f" ({', '.join(sorted(_FILE_TYPES))})"
         )
+    if ext in _TEXT_TYPES:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise BoardError("text attachments must be UTF-8") from None
+        if any(ord(c) < 32 and c not in "\n\r\t" for c in text):
+            raise BoardError("text attachment contains binary/control characters")
+        return ext
+    if ext == "pdf":
+        if not data.startswith(b"%PDF-"):
+            raise BoardError("file content does not look like .pdf")
+        return ext
     if not data.startswith(_MAGIC[ext]) or (
         ext == "webp" and data[8:12] != b"WEBP"
     ):

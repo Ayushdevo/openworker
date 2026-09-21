@@ -822,6 +822,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         return Response(
             content=data,
             media_type=mime,
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
     @app.post("/v1/sessions/{session_id}/board/comment")
@@ -917,6 +918,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             request,
             lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
         )
+
+    @app.get("/v1/board/comments")
+    def board_comments(request: Request, space: str, id: int, after_seq: int = 0, limit: int = 20):
+        return _board(request, lambda actor: manager.team_store.comment_page(
+            space, id, actor=actor, after_seq=after_seq, limit=limit))
+
+    @app.get("/v1/board/comment")
+    def board_comment_text(request: Request, space: str, id: int, seq: int,
+                           offset: int = 0, max_chars: int = 12000):
+        return _board(request, lambda actor: manager.team_store.comment_text(
+            space, id, actor=actor, seq=seq, offset=offset, max_chars=max_chars))
 
     @app.post("/v1/board/items")
     def board_create_item(request: Request, body: dict):
@@ -1066,6 +1078,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return Response(
                 content=path.read_bytes(),
                 media_type=manager.attachment_store.mime_for(name),
+                headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
             )
 
         return _board(request, run)

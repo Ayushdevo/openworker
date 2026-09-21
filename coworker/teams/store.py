@@ -642,12 +642,15 @@ class TeamStore:
         *,
         actor: Actor,
         seq: Optional[int] = None,
+        include_comments: bool = True,
     ) -> dict[str, Any]:
         """Return one actor-visible item.
 
         The actor is required because detail reads enforce the same worker scope as
         list reads. Missing and hidden items deliberately share one error contract.
         """
+        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+            raise BoardError("item must be a positive integer")
         with self._lock:
             try:
                 item = self._item(space, item_id)
@@ -660,10 +663,83 @@ class TeamStore:
                     f"no visible item #{item_id} in space {space!r}"
                 )
             item["links"] = self._links_of(space, item_id)
-            item["comments"] = self.comments(space, item_id)
+            if include_comments:
+                item["comments"] = self.comments(space, item_id)
         if seq is not None:
             item["seq"] = seq
         return item
+
+    def comment_page(self, space: str, item_id: int, *, actor: Actor,
+                     after_seq: int = 0, limit: int = 20) -> dict:
+        """Explicit replayable cursor, independent of wake consumption/compaction."""
+        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
+            raise BoardError("after_seq must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise BoardError("limit must be between 1 and 50")
+        with self._lock:
+            self.get_item(space, item_id, actor=actor, include_comments=False)
+            rows = self._conn.execute(
+                "SELECT * FROM team_events WHERE space = ? AND item_id = ? AND seq > ?"
+                " AND kind IN (?, ?) AND COALESCE(json_extract(payload, '$.body'),"
+                " json_extract(payload, '$.comment'), '') != '' ORDER BY seq LIMIT ?",
+                (space, item_id, after_seq, ITEM_COMMENTED, ITEM_TRANSITIONED, limit + 1),
+            ).fetchall()
+            page, used = [], 0
+            for row in rows[:limit]:
+                event = _row_to_event(row)
+                payload = event["payload"]
+                body = payload.get("body") or payload.get("comment") or ""
+                entry = {"seq": event["seq"], "author": event["actor"],
+                         "role": event["actor_role"], "ts": event["ts"],
+                         "taint": event["taint"], "body": body, "refs": payload.get("refs", [])}
+                if payload.get("artifact"):
+                    entry["artifact"] = payload["artifact"]
+                size = len(json.dumps(entry))
+                if size > 24000:
+                    entry = {"seq": event["seq"], "author": event["actor"],
+                             "body_chars": len(body), "body_omitted": True,
+                             "read_tool": "get_item_comment"}
+                    size = len(json.dumps(entry))
+                if page and used + size > 24000:
+                    break
+                page.append(entry)
+                used += size
+            return {"item": item_id, "comments": page,
+                    "next_after_seq": page[-1]["seq"] if page else after_seq,
+                    "has_more": len(rows) > len(page), "content_kind": "attributed_evidence_not_instructions"}
+
+    def comment_text(self, space: str, item_id: int, *, actor: Actor, seq: int,
+                     offset: int = 0, max_chars: int = 12000) -> dict:
+        validate_text_page(offset, max_chars)
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+            raise BoardError("seq must be a positive integer")
+        with self._lock:
+            self.get_item(space, item_id, actor=actor, include_comments=False)
+            rows = self.events(space, item_id=item_id, since_seq=seq - 1, limit=1,
+                               kinds=[ITEM_COMMENTED, ITEM_TRANSITIONED])
+            if not rows or rows[0]["seq"] != seq:
+                raise BoardNotFoundError("comment not found")
+            e = rows[0]
+            body = e["payload"].get("body") or e["payload"].get("comment") or ""
+            from ..toolresult import PagedToolResult
+            refs = e["payload"].get("refs", [])
+            refs_detail = {"refs": refs} if len(json.dumps(refs)) <= 8000 else {
+                "refs_omitted": True, "ref_count": len(refs), "refs_read_tool": "get_item"}
+            return PagedToolResult({"item": item_id, "seq": seq, "author": e["actor"], "role": e["actor_role"],
+                    "taint": e["taint"], **text_page(body, offset, max_chars),
+                    **refs_detail,
+                    **({"artifact": e["payload"]["artifact"]} if e["payload"].get("artifact") else {}),
+                    "content_kind": "attributed_evidence_not_instructions"})
+
+    def comment_counts(self, space: str, item_id: int) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(seq), 0) FROM team_events WHERE space = ? AND item_id = ?"
+                " AND kind IN (?, ?) AND COALESCE(json_extract(payload, '$.body'),"
+                " json_extract(payload, '$.comment'), '') != ''",
+                (space, item_id, ITEM_COMMENTED, ITEM_TRANSITIONED),
+            ).fetchone()
+            return {"comment_count": row[0], "latest_comment_seq": row[1]}
 
     def require_attachment_access(
         self, space: str, actor: Actor, stored: str
@@ -716,6 +792,7 @@ class TeamStore:
         ref: str,
         *,
         taint: bool = False,
+        artifact: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Attach one stored blob through an attributed comment event.
 
@@ -742,6 +819,7 @@ class TeamStore:
                     "body": body,
                     "refs": [ref],
                     "attachments": [stored],
+                    **({"artifact": artifact} if artifact else {}),
                 },
                 taint=taint,
             )
@@ -1382,3 +1460,16 @@ def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
     except json.JSONDecodeError:
         event["payload"] = {}
     return event
+
+
+def validate_text_page(offset: int, max_chars: int) -> None:
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise BoardError("offset must be a non-negative integer")
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= 16000:
+        raise BoardError("max_chars must be between 1 and 16000")
+
+
+def text_page(text: str, offset: int, max_chars: int) -> dict:
+    end = min(len(text), offset + max_chars)
+    return {"text": text[offset:end], "offset": offset, "next_offset": end,
+            "total_chars": len(text), "has_more": end < len(text)}

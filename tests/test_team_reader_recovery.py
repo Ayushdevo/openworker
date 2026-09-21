@@ -50,7 +50,12 @@ def test_get_item_tool_reads_full_evidence_with_worker_visibility(manager):
     detail = read(item["id"])
     assert detail["description"] == "Acme sample"
     assert detail["criteria"] == "Tests pass"
-    assert detail["comments"][0]["body"].endswith("passed " * 200)
+    assert "comments" not in detail
+    assert detail["comment_count"] == 1
+    read_comments = next(t for t in board_tools(manager.team_store, space=space, actor=worker)
+                         if t.__name__ == "get_item_comments")
+    assert read_comments(item["id"])["comments"][0]["body"].endswith("passed " * 200)
+    assert "error" in read_comments(hidden["id"])
     assert detail["mention"].endswith(f"(task:{item['id']})")
     assert "error" in read(hidden["id"])
     for bad in (0, -1, True, "1"):

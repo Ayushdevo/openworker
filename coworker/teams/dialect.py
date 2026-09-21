@@ -48,6 +48,8 @@ class BoardDialect(Protocol):
         assignee: Optional[str] = None,
     ) -> list[dict[str, Any]]: ...
     def get_item(self, space: str, item_id: int) -> dict[str, Any]: ...
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict: ...
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict: ...
     def create_item(
         self,
         space: str,
@@ -153,6 +155,12 @@ class LocalDialect:
 
     def get_item(self, space: str, item_id: int) -> dict[str, Any]:
         return self.store.get_item(space, item_id, actor=self.actor)
+
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict:
+        return self.store.comment_page(space, item_id, actor=self.actor, after_seq=after_seq, limit=limit)
+
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict:
+        return self.store.comment_text(space, item_id, actor=self.actor, seq=seq, offset=offset, max_chars=max_chars)
 
     def create_item(
         self,
@@ -374,6 +382,13 @@ class RemoteDialect:
 
     def get_item(self, space: str, item_id: int) -> dict[str, Any]:
         return self._get("/v1/board/item", {"space": space, "id": item_id})
+
+    def comment_page(self, space: str, item_id: int, *, after_seq: int = 0, limit: int = 20) -> dict:
+        return self._get("/v1/board/comments", {"space": space, "id": item_id, "after_seq": after_seq, "limit": limit})
+
+    def comment_text(self, space: str, item_id: int, *, seq: int, offset: int = 0, max_chars: int = 12000) -> dict:
+        return self._get("/v1/board/comment", {"space": space, "id": item_id, "seq": seq,
+                         "offset": offset, "max_chars": max_chars})
 
     def create_item(
         self,

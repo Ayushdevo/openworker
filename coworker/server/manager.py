@@ -2680,6 +2680,21 @@ class SessionManager:
         ) + journal_tools(
             self.journal_store, actor=actor, space=space
         )
+        from ..teams.artifacts import artifact_tools
+
+        def team_identity():
+            # Resolve live membership, never a model-supplied team/board id.
+            team = self.teams.for_lead_session(session_id)
+            if team is None:
+                member = self.teams.for_worker_session(session_id)
+                if member is not None and member[1].actor == actor.id:
+                    team = member[0]
+            return team.team_id if team is not None and team.space == space else ""
+
+        tools += artifact_tools(self.team_store, self.attachment_store, space=space,
+            actor=actor, roots=lambda: getattr(self._engines.get(session_id), "roots", []),
+            team_identity=team_identity,
+            taint=lambda: bool(getattr(self._engines.get(session_id), "tainted", False)))
         if role == "lead":
             tools.append(self._steer_tool(session_id))
             tools.append(self._team_options_tool())
@@ -3342,6 +3357,7 @@ class SessionManager:
                 "item": item_id,
                 "title": item["title"] if item else "",
                 "actor": event.get("actor", ""),
+                "seq": event["seq"],
             }
             if event["kind"] == "item_assigned":
                 if item is None:
@@ -3381,7 +3397,8 @@ class SessionManager:
             elif event["kind"] == "item_transitioned":
                 to = payload.get("to", "?")
                 comment = clamp(payload.get("comment") or "")
-                note = f" — “{comment}”" if comment else ""
+                note = (f" — “{comment}” (comment seq {event['seq']}; "
+                        f"get_item_comment(item={item_id}, seq={event['seq']}))") if comment else ""
                 historical = bool(item and item.get("state") != to)
                 if historical:
                     note += f" (historical transition; current state: {item['state']})"
@@ -3442,6 +3459,7 @@ class SessionManager:
                 lines.append(
                     f"Comment on {title} by {event['actor']}:"
                     f" {clamp(payload.get('body', ''))}"
+                    f" (seq {event['seq']}; get_item_comment(item={item_id}, seq={event['seq']}))"
                 )
                 rows.append(
                     {
@@ -3467,7 +3485,8 @@ class SessionManager:
             message = (
                 "Team update — your team needs decisions:\n"
                 + body
-                + "\n\nFull hand-off comments live on the board (get_item)."
+                + "\n\nRead cited handoffs with get_item_comment(item, seq);"
+                " get_item reads current details, not history."
                 " Act on current state only, not historical transitions."
                 " Verify review items against their acceptance criteria (then"
                 " done, or send back with a comment), unblock or reassign blocked"

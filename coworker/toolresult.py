@@ -32,6 +32,14 @@ _MIN_KEEP = 1_000
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
+class PagedToolResult(dict):
+    """Trusted native reader result with its own bounded, replayable pagination.
+
+    Do not head/tail its text: the cursor describes exactly the returned range.
+    JSON/tool payloads cannot opt in; only native code can construct this type.
+    """
+
+
 def serialize_result(result: Any) -> str:
     """Exactly what `_tool_result_message` puts in the message content."""
     return result if isinstance(result, str) else json.dumps(result, default=str)
@@ -71,6 +79,8 @@ def bound_tool_result(
 ) -> Any:
     """Return `result` unchanged when it fits, else a bounded copy. `max_bytes` None or
     <= 0 disables bounding. Spill files are written only when `spill_dir` is given."""
+    if isinstance(result, PagedToolResult):
+        return dict(result)
     if not max_bytes or max_bytes <= 0:
         return result
     text = serialize_result(result)

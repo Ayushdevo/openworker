@@ -530,7 +530,7 @@ def test_attachment_store_validates(tmp_path):
     from coworker.teams.attachments import AttachmentStore
 
     store = AttachmentStore(tmp_path / "attachments")
-    with pytest.raises(BoardError, match="images only"):
+    with pytest.raises(BoardError, match="unsupported attachment type"):
         store.put(b"#!/bin/sh", "run.sh")
     with pytest.raises(BoardError, match="does not look like"):
         store.put(b"not a png at all", "fake.png")
