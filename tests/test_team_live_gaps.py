@@ -131,6 +131,99 @@ def test_cross_team_or_mismatched_worker_cannot_link_or_disclose_prompt(manager)
     assert original.state == "pending"
 
 
+def test_denied_lead_allow_atomically_denies_worker_and_retires_other_proxies(manager):
+    original, request = request_for(manager)
+    data = manager.approval_prompt_data("lead", request)
+    parent = manager.inbox.add_approval("lead", "Decision", data=data)
+    sibling = manager.inbox.add_approval("lead", "Other window", data=data)
+
+    async def run():
+        waits = [asyncio.create_task(manager.inbox.wait(i.id)) for i in (original, parent, sibling)]
+        await asyncio.sleep(0)
+        assert manager.inbox.resolve(parent.id, "deny", by="human")
+        assert await asyncio.wait_for(asyncio.gather(*waits), 1) == ["deny", "deny", "superseded"]
+
+    asyncio.run(run())
+    assert original.resolved_by == "human"
+    assert not manager.inbox.pending()
+    assert not manager.inbox.resolve(original.id, "allow")
+    loaded = InboxStore(manager.inbox.path)
+    assert loaded.get(original.id).resolution == "deny"
+    assert loaded.get(parent.id).resolution == "deny"
+
+
+@pytest.mark.parametrize("answer", ["allow", "interrupted", "session deleted"])
+def test_non_denial_of_proxy_does_not_resolve_worker(manager, answer):
+    original, request = request_for(manager)
+    parent = manager.inbox.add_approval("lead", "Decision", data=manager.approval_prompt_data("lead", request))
+    manager.inbox.resolve(parent.id, answer)
+    assert original.state == "pending"
+
+
+def test_rejecting_a_lead_denial_never_implicitly_allows_worker(manager):
+    original, request = request_for(manager)
+    request.arguments["decision"] = "deny"
+    parent = manager.inbox.add_approval("lead", "Decision", data=manager.approval_prompt_data("lead", request))
+    manager.inbox.resolve(parent.id, "deny")
+    assert original.state == "pending"
+
+
+def test_denial_after_restart_resumes_both_parked_sessions(manager, monkeypatch):
+    original, request = request_for(manager)
+    parent = manager.inbox.add_approval("lead", "Decision", data=manager.approval_prompt_data("lead", request))
+    manager.inbox = InboxStore(manager.inbox.path)
+    resumed = []
+
+    async def resume(item):
+        resumed.append((item.session_id, item.resolution))
+
+    monkeypatch.setattr(manager, "_durable_resume", resume)
+    monkeypatch.setattr(manager, "reconcile_obsolete_prompts", lambda sid: None)
+    asyncio.run(manager.resolve_inbox(parent.id, "deny", by="human"))
+    assert sorted(resumed) == [("lead", "deny"), ("worker", "deny")]
+    assert manager.inbox.get(original.id).resolution == "deny"
+
+
+def test_rest_proxy_denial_is_visible_to_another_client_and_survives_reload(manager, monkeypatch):
+    from fastapi.testclient import TestClient
+    from coworker.server import create_app
+
+    original, request = request_for(manager)
+    parent = manager.inbox.add_approval("lead", "Decision", data=manager.approval_prompt_data("lead", request))
+    monkeypatch.setattr(manager, "reconcile_obsolete_prompts", lambda sid: None)
+    first = TestClient(create_app(manager))
+    other = TestClient(create_app(manager))
+    assert first.post(f"/v1/inbox/{parent.id}/resolve", json={"resolution": "deny"}).json()["ok"]
+    rows = other.get("/v1/inbox", params={"session_id": "worker"}).json()["items"]
+    assert next(i for i in rows if i["id"] == original.id)["resolution"] == "deny"
+    assert not other.post(f"/v1/inbox/{original.id}/resolve", json={"resolution": "allow"}).json()["ok"]
+    assert InboxStore(manager.inbox.path).get(original.id).resolution == "deny"
+
+
+def test_lead_proxy_denial_releases_live_engine_without_executing_decision(manager, monkeypatch):
+    original, request = request_for(manager)
+    manager.provider = ScriptedProvider([
+        _tool_turn("decide_worker_call", request.arguments), _text_turn("The user denied it.")
+    ])
+    executed = []
+    monkeypatch.setattr(manager, "decide_worker_call", lambda *a: executed.append(a))
+
+    async def run():
+        delivery = asyncio.create_task(manager.deliver_to_session("lead", "Review the waiting call."))
+        for _ in range(200):
+            pending = manager.inbox.pending("lead")
+            if pending:
+                break
+            await asyncio.sleep(0.01)
+        assert pending
+        manager.inbox.resolve(pending[0].id, "deny", by="human")
+        await asyncio.wait_for(delivery, 3)
+
+    asyncio.run(run())
+    assert original.resolution == "deny"
+    assert not executed and not manager.inbox.pending()
+
+
 def test_successful_self_wake_ends_turn_without_another_model_call(manager):
     manager.provider = ScriptedProvider([_tool_turn("sleep_for", {"seconds": 2})])
     engine = manager.get_engine("lead", agent="swe-lead")

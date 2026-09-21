@@ -1816,11 +1816,22 @@ class SessionManager:
         item = self.inbox.get(item_id)
         if item is not None:
             self.reconcile_obsolete_prompts(item.session_id)
+        pending_before = {p.id: p for p in self.inbox.pending()}
         ok = self.inbox.resolve(item_id, resolution, by=by)
         if not ok or item is None:
             return ok
-        if not self.is_running(item.session_id):
-            await self._durable_resume(item)
+        # Store resolution may atomically deny the original worker call and retire
+        # sibling proxies too. Resume all affected idle sessions after a restart, not
+        # just the lead whose card was clicked. Live waiters are released by the store.
+        resumed_sessions = set()
+        resumes = []
+        for resolved in pending_before.values():
+            if (resolved.state == "resolved" and resolved.session_id not in resumed_sessions
+                    and not self.is_running(resolved.session_id)):
+                resumed_sessions.add(resolved.session_id)
+                resumes.append(self._durable_resume(resolved))
+        if resumes:
+            await asyncio.gather(*resumes)
         return ok
 
     async def _durable_resume(self, item) -> None:

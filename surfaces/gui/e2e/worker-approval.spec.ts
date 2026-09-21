@@ -1,5 +1,25 @@
 import { expect } from "@playwright/test";
-import { test } from "./fixtures";
+import { test, sendSessionEvent } from "./fixtures";
+
+for (const suggestion of ["allow", "deny"]) {
+  test(`overriding a lead ${suggestion} answers the exact worker request`, async ({ page }) => {
+    const answers: Array<{ id: string; resolution: string }> = [];
+    await page.route("**/v1/inbox/*/resolve", async route => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
+      answers.push({ id, resolution: route.request().postDataJSON().resolution });
+      await route.fulfill({ json: { ok: true } });
+    });
+    await page.goto("/");
+    await sendSessionEvent(page, { type: "permission_required", data: {
+      name: "decide_worker_call",
+      arguments: { worker: "Maya", call_id: "sample-worker-prompt", decision: suggestion, note: "Verify the assigned task." },
+      worker_call: { worker: "Maya", tool: "run_shell", arguments: { command: "npm test" }, state: "pending" },
+    } });
+    await page.getByTestId("workerdec-override").click();
+    await expect.poll(() => answers.some(a => a.id === "sample-worker-prompt" &&
+      a.resolution === (suggestion === "allow" ? "deny" : "allow"))).toBe(true);
+  });
+}
 
 test("a background lead approval shows the command and disappears when the worker request resolves", async ({ page }) => {
   let send: ((event: unknown) => void) | undefined;

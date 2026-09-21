@@ -141,7 +141,9 @@ def test_unattributed_request_is_visible_and_forwarded_gate_is_not_double_counte
     assert [r["id"] for r in summary["pending_requests"]] == [forwarded.id]
     manager.inbox.resolve(forwarded.id, "deny")
     summary = manager.team_summary(team.team_id)
-    assert [r["id"] for r in summary["pending_requests"]] == [original.id]
+    assert summary["pending_requests"] == []
+    assert summary["totals"]["asks_waiting"] == 0
+    assert original.resolution == "deny"  # denying the lead's allow resolves both cards
 
 
 def test_runtime_facts_do_not_read_configuration_or_follow_workspace_symlinks(tmp_path, monkeypatch):

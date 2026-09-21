@@ -406,9 +406,25 @@ class InboxStore:
                 return False
             self._resolve_locked(item, resolution, by)
             resolved_ids = [item_id]
+            source_id = item.data.get("worker_prompt_id")
+            source = self._items.get(source_id) if isinstance(source_id, str) else None
+            args = item.data.get("arguments") or {}
+            # Server-stamped ownership link only. Denying permission to ALLOW a worker
+            # action means deny that action, not leave it parked indefinitely. Never
+            # invert a proposed denial into an allow, or propagate stop/delete/errors.
+            if (resolution == "deny" and item.kind == KIND_APPROVAL
+                    and item.data.get("tool") == "decide_worker_call"
+                    and isinstance(args, dict) and args.get("decision") == "allow"
+                    and args.get("call_id") == source_id
+                    and source is not None and source.kind == KIND_APPROVAL
+                    and source.state == STATE_PENDING):
+                self._resolve_locked(source, "deny", by)
+                resolved_ids.append(source.id)
+                if isinstance(item.data.get("worker_call"), dict):
+                    item.data["worker_call"] = {**item.data["worker_call"], "state": STATE_RESOLVED, "resolution": "deny"}
             for dependent in self._items.values():
-                if dependent.state == STATE_PENDING and dependent.data.get("worker_prompt_id") == item_id:
-                    self._supersede_locked(dependent, item)
+                if dependent.state == STATE_PENDING and dependent.data.get("worker_prompt_id") in resolved_ids:
+                    self._supersede_locked(dependent, self._items[dependent.data["worker_prompt_id"]])
                     resolved_ids.append(dependent.id)
             self._save()
         for resolved_id in resolved_ids:
