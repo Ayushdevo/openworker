@@ -840,6 +840,7 @@ class TurnEngine:
         payload = {
             **self.audit_context,
             "tool": tool_call.name,
+            "call_id": tool_call.id,
             "arguments": tool_call.arguments,
             **event,
         }
