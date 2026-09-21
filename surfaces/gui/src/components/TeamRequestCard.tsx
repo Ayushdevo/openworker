@@ -810,7 +810,7 @@ export function TeamRequestCard({
         <div className="teamreq-advanced">
           <button type="button" className="teamreq-add" aria-expanded={advanced} data-testid="teamreq-advanced"
             onClick={() => setAdvanced(value => !value)}>
-            <span aria-hidden="true">{advanced ? "⌄" : "›"}</span> {t("team.advanced")}
+            <Icon name={advanced ? "chevronDown" : "chevronRight"} size={12} /> {t("team.advanced")}
           </button>
           {advanced && <div className="teamreq-guidance">
             <p className="proposal-muted">{t("team.guidance_help")}</p>

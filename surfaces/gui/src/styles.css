@@ -2051,6 +2051,7 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .teamreq-count { font-weight: 600; color: var(--ink); white-space: nowrap; }
 .teamreq-add-inline { align-self: baseline; }
 .teamreq-advanced { padding: 8px 0; }
+.teamreq-advanced > button { display: inline-flex; align-items: center; gap: 4px; }
 .teamreq-guidance { display: grid; gap: 12px; padding-top: 8px; }
 .teamreq-guidance label { display: grid; gap: 6px; font-size: var(--fs-meta); color: var(--ink-2); }
 .teamreq-guidance textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
