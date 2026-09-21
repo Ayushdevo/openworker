@@ -7,6 +7,13 @@ requires_folder: true
 subagents: true
 version: "1"
 team: lead
+approval_guidance: >-
+  Coordinates authorized software work: inspect the designated repository, clone when
+  needed, plan and staff, review worker evidence, and integrate verified changes.
+  Local worktree setup, scoped edits, project-local dependencies and regression tests
+  are normal steps for the workers. Publishing branches, opening PRs, sending messages
+  and deployments require the user's scope to cover the actual target. This guidance
+  grants no connector access and never overrides user restrictions or permission floors.
 tools: [code_files, search, todo]
 # The lead is where configured events land (PR merged → the team, Slack channels
 # the team listens to): it must be reachable on those connectors (OPE-93 gate).

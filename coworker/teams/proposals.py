@@ -46,6 +46,7 @@ TEAM_PROPOSAL_SCHEMA = obj({
         "group": KEY, "item_ids": array({"type": "integer", "minimum": 1}),
         "connectors": array(TEXT, maximum=30),
         "connector_reasons": {"type": "object", "additionalProperties": TEXT},
+        "approval_guidance": {"type": "string", "maxLength": 2400},
     }, ["persona", "name", "reason", "group", "item_ids"]), 1),
     "enable_chat": {"type": "boolean"},
 })
@@ -166,4 +167,9 @@ Group labels fit the domain: engineering Build/Verify, security Assess/Remediate
 marketing Research/Create/Review. Name staffing groups for their actual responsibilities,
 not their implementation persona: a swe-worker doing security belongs in Assessment &
 remediation, not automatically Build. Do not invent isolation, machine placement, or access.
+For each member, optionally provide approval_guidance (at most 2400 characters): concrete
+routine actions and explicit restrictions, grounded in the user's scope. It is editable
+under Advanced in the staffing card and saved only with the human's approval. It guides
+Auto-approve, never grants connectors/tools, overrides restrictions, or certifies claims
+such as a disposable database. Later steering does not modify the approved text.
 """

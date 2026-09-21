@@ -1356,6 +1356,7 @@ export interface TeamMemberDecision {
   persona: string;
   name?: string;
   connectors: string[];
+  approval_guidance?: string;
   // The human's FINAL model choice for this worker — sent only when the gate offered
   // a model picker (the server supplied `runnable_models`).
   model?: string;

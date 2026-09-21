@@ -9414,8 +9414,72 @@
     },
     "team-request": {
       "event": "team_proposed",
-      "canonical": "launch-team",
+      "canonical": "approval-guidance",
       "states": {
+        "approval-guidance": {
+          "lead_mode": "auto-approve",
+          "lead_model": "anthropic:claude-sonnet-4-8",
+          "runnable_models": [
+            {
+              "id": "anthropic:claude-opus-4-8",
+              "label": "Claude Opus 4.8"
+            },
+            {
+              "id": "anthropic:claude-sonnet-4-8",
+              "label": "Claude Sonnet 4.8"
+            },
+            {
+              "id": "openai:gpt-5.2",
+              "label": "GPT-5.2"
+            },
+            {
+              "id": "ollama:qwen3-coder:30b",
+              "label": "Qwen3 Coder 30B (local)"
+            }
+          ],
+          "model_options": {
+            "swe-worker": [
+              "anthropic:claude-opus-4-8",
+              "anthropic:claude-sonnet-4-8"
+            ],
+            "test-worker": [
+              "anthropic:claude-sonnet-4-8"
+            ],
+            "review-worker": [
+              "anthropic:claude-opus-4-8",
+              "anthropic:claude-sonnet-4-8"
+            ],
+            "docs-worker": [
+              "anthropic:claude-sonnet-4-8"
+            ]
+          },
+          "members": [
+            {
+              "persona": "swe-worker",
+              "name": "sam",
+              "reason": "Builds the PDF endpoint and the download button",
+              "resolved_model": "anthropic:claude-opus-4-8",
+              "approval_guidance": "Implement the assigned billing fix in your own worktree. Run local checks. Do not push, deploy or send messages."
+            },
+            {
+              "persona": "test-worker",
+              "name": "maya",
+              "reason": "Writes the API and UI tests, runs the suite",
+              "resolved_model": "anthropic:claude-sonnet-4-8",
+              "approval_guidance": "Independently verify acceptance criteria in the local app. Save screenshots in your scratch directory and attach them to the board. No production access."
+            }
+          ],
+          "offer": {
+            "swe-worker": [
+              "github"
+            ],
+            "test-worker": [
+              "github"
+            ]
+          },
+          "other_connected": [],
+          "enable_chat": true
+        },
         "launch-team": {
           "title": "The customer launch team",
           "summary": "Seven builders own separate workstreams. Three verifiers independently check their results.",
@@ -11030,6 +11094,87 @@
         }
       },
       "inbox": {
+        "approval-guidance": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "plan",
+          "title": "Create this team?",
+          "body": "- swe-worker (sam)\n- test-worker (maya)",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "gate": "team",
+            "lead_mode": "auto-approve",
+            "lead_model": "anthropic:claude-sonnet-4-8",
+            "runnable_models": [
+              {
+                "id": "anthropic:claude-opus-4-8",
+                "label": "Claude Opus 4.8"
+              },
+              {
+                "id": "anthropic:claude-sonnet-4-8",
+                "label": "Claude Sonnet 4.8"
+              },
+              {
+                "id": "openai:gpt-5.2",
+                "label": "GPT-5.2"
+              },
+              {
+                "id": "ollama:qwen3-coder:30b",
+                "label": "Qwen3 Coder 30B (local)"
+              }
+            ],
+            "model_options": {
+              "swe-worker": [
+                "anthropic:claude-opus-4-8",
+                "anthropic:claude-sonnet-4-8"
+              ],
+              "test-worker": [
+                "anthropic:claude-sonnet-4-8"
+              ],
+              "review-worker": [
+                "anthropic:claude-opus-4-8",
+                "anthropic:claude-sonnet-4-8"
+              ],
+              "docs-worker": [
+                "anthropic:claude-sonnet-4-8"
+              ]
+            },
+            "members": [
+              {
+                "persona": "swe-worker",
+                "name": "sam",
+                "reason": "Builds the PDF endpoint and the download button",
+                "resolved_model": "anthropic:claude-opus-4-8",
+                "approval_guidance": "Implement the assigned billing fix in your own worktree. Run local checks. Do not push, deploy or send messages."
+              },
+              {
+                "persona": "test-worker",
+                "name": "maya",
+                "reason": "Writes the API and UI tests, runs the suite",
+                "resolved_model": "anthropic:claude-sonnet-4-8",
+                "approval_guidance": "Independently verify acceptance criteria in the local app. Save screenshots in your scratch directory and attach them to the board. No production access."
+              }
+            ],
+            "offer": {
+              "swe-worker": [
+                "github"
+              ],
+              "test-worker": [
+                "github"
+              ]
+            },
+            "other_connected": [],
+            "enable_chat": true
+          }
+        },
         "launch-team": {
           "id": "gallery-item",
           "session_id": "gallery-session",

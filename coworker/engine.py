@@ -232,6 +232,7 @@ class TurnEngine:
         self.reviewer_settings_key = None
         self._reviewer_denials = 0
         self._reviewer_verdicts: dict[str, Any] = {}
+        self._reviewer_input_snapshots: dict[str, Any] = {}
         # (c) How each consequential call got cleared, keyed by tool_call id:
         # {"origin": "reviewer"|"bypass"|"user", "note": <reviewer reasoning>, "grant":
         # <user outcome>}. Consumed by _record_result into the TOOL_FINISHED event AND
@@ -273,6 +274,9 @@ class TurnEngine:
         # Harness-resolved original action for a lead's permission proxy. Never
         # derived from the lead's note or another agent's conversation.
         self.delegated_approval: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
+        self.reviewer_context: Optional[Callable[[], dict[str, Any]]] = None
+        self.reviewer_owner_history: Optional[Callable[[], tuple[str, list[dict[str, Any]]]]] = None
+        self.reviewer_denial_message: Optional[str] = None
         self._authorized_delegates: dict[str, dict] = {}
         # What the agent itself created this session (OPE-114 §1). The reviewer never sees
         # file contents, so `python scripts/setup.py` is unjudgeable from its text — but the
@@ -401,6 +405,7 @@ class TurnEngine:
         # everything else that turn to the human. A fresh user message is a fresh brief.
         self._reviewer_denials = 0
         self._reviewer_verdicts.clear()
+        self._reviewer_input_snapshots.clear()
         self._authorized_delegates.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
@@ -1185,7 +1190,7 @@ class TurnEngine:
         )
 
     def _user_history(self) -> tuple[str, list[dict[str, Any]]]:
-        """(current request, earlier user messages) — the user's own words only, extracted
+        """(current request, earlier unsourced user messages), extracted
         mechanically (§8.2). Never agent output, never tool results, never a summary.
 
         `ask_user` answers are merged in from `_ask_replies` (captured as they arrived, not
@@ -1201,7 +1206,7 @@ class TurnEngine:
 
         texts: list[str] = []
         for msg in self.messages:
-            if msg.get("role") != "user":
+            if msg.get("role") != "user" or msg.get("source"):
                 continue
             text = reviewer_text(msg.get("content"))
             if text:
@@ -1228,6 +1233,14 @@ class TurnEngine:
             if a >= len(texts)
         )
         return texts[-1], history
+
+    def _review_inputs(self) -> tuple[str, list[dict[str, Any]], dict]:
+        try:
+            request, history = self.reviewer_owner_history() if self.reviewer_owner_history else self._user_history()
+            context = self.reviewer_context() if self.reviewer_context else {}
+            return request, deepcopy(history), deepcopy(context)
+        except Exception:
+            return "", [], {"context_unavailable": True}
 
     def _downloaded_target(self, tool_call: ToolCall) -> Optional[Any]:
         """A file this call would run that the agent DOWNLOADED this session, or None.
@@ -1279,7 +1292,7 @@ class TurnEngine:
                 pending.append(tool_call)
         if not pending:
             return
-        request, history = self._user_history()
+        request, history, context = self._review_inputs()
         consulted_reviewer = self.reviewer
         settings_epoch = self.reviewer_settings_epoch
         verdicts = await asyncio.gather(
@@ -1290,6 +1303,7 @@ class TurnEngine:
                     tool_name=tc.name,
                     arguments=tc.arguments,
                     provenance=self._provenance(tc),
+                    **({"action_context": context} if context else {}),
                 )
                 for tc in pending
             ]
@@ -1297,16 +1311,22 @@ class TurnEngine:
         for tc, verdict in zip(pending, verdicts):
             if (self.reviewer is not consulted_reviewer
                     or self.reviewer_settings_epoch != settings_epoch
-                    or not self._reviewer_active()):
+                    or not self._reviewer_active()
+                    or (request, history, context) != self._review_inputs()):
                 verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
             self._reviewer_verdicts[tc.id] = verdict
+            self._reviewer_input_snapshots[tc.id] = (request, history, context)
 
     async def _consult_reviewer(self, tool_call: ToolCall) -> Any:
         """The parked verdict from `_preconsult_reviewer`, or a fresh single call."""
         verdict = self._reviewer_verdicts.pop(tool_call.id, None)
+        snapshot = self._reviewer_input_snapshots.pop(tool_call.id, None)
         if verdict is not None:
+            if snapshot is not None and snapshot != self._review_inputs():
+                from .reviewer import Verdict
+                return Verdict("unsure", "Approval context changed since review; a human must decide.")
             return verdict
-        request, history = self._user_history()
+        request, history, context = self._review_inputs()
         delegated = self._delegated_context(tool_call)
         if delegated:
             from .reviewer import Verdict
@@ -1318,16 +1338,21 @@ class TurnEngine:
                 provenance=delegated.get("provenance", ""),
                 action_context=delegated["context"],
             )
-            if delegated != self._delegated_context(tool_call):
+            if delegated != self._delegated_context(tool_call) or (request, history, context) != self._review_inputs():
                 return Verdict("unsure", "The worker request or its permissions changed during review. Review the current request.")
             return verdict
-        return await self.reviewer.review(
+        result = await self.reviewer.review(
             request=request,
             history=history,
             tool_name=tool_call.name,
             arguments=tool_call.arguments,
             provenance=self._provenance(tool_call),
+            **({"action_context": context} if context else {}),
         )
+        if (request, history, context) != self._review_inputs():
+            from .reviewer import Verdict
+            return Verdict("unsure", "Approval context changed during review; review the current request.")
+        return result
 
     def _delegated_context(self, tool_call: ToolCall) -> dict | None:
         if tool_call.name != "decide_worker_call" or str(tool_call.arguments.get("decision", "")).lower().strip() != "allow":
@@ -1394,7 +1419,7 @@ class TurnEngine:
             # Only the current, resolved action can be reviewed. This proxy uses
             # the on-demand live path; never send just its ID to the shadow judge.
             return
-        request, history = self._user_history()
+        request, history, context = self._review_inputs()
         prov = self._provenance(tool_call)
 
         async def _shadow() -> None:
@@ -1405,6 +1430,7 @@ class TurnEngine:
                     provenance=prov,
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
+                    **({"action_context": context} if context else {}),
                 )
                 self._audit(
                     tool_call,
@@ -1597,7 +1623,7 @@ class TurnEngine:
                         **({"reviewer_paused": _REVIEWER_PAUSED_TEXT} if tripped else {}),
                     },
                 )
-                deny_msg = _tool_error_message(tool_call, AGENT_DENY_MESSAGE)
+                deny_msg = _tool_error_message(tool_call, self.reviewer_denial_message or AGENT_DENY_MESSAGE)
                 deny_msg["_display"] = {
                     "approval_origin": "reviewer_denied",
                     "approval_note": verdict.reason,
@@ -2417,7 +2443,7 @@ class TurnEngine:
         A fresh answer also resets the §8.4 denial streak: the user is present and just
         gave direction — the reviewer deserves a fresh look at what follows."""
         self._reviewer_denials = 0
-        anchor = sum(1 for m in self.messages if m.get("role") == "user")
+        anchor = sum(1 for m in self.messages if m.get("role") == "user" and not m.get("source"))
         answers = result.get("answers")
         values = (
             [str(v) for v in answers.values()]

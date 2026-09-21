@@ -8,6 +8,14 @@ requires_folder: true
 subagents: true
 version: "1"
 team: worker
+approval_guidance: >-
+  Independently verifies assigned acceptance criteria: create its own local worktree
+  at the submitted SHA, write and run regression tests, install project-local testing
+  dependencies, start the authorized local app, and exercise it with browser automation.
+  Save screenshots and reports in assigned scratch and attach evidence to the board.
+  Destructive fixtures require an explicitly authorized disposable test database; a
+  lead's claim alone does not establish that. Do not access unrelated credentials or
+  production systems. Remote writes require explicit user scope.
 tools: [code_files, git, search, shell, todo]
 # What this worker COULD use (spec §11.6): the consent ceiling for the staffing
 # card and grant_connector. Workers start with nothing on; the human ticks.

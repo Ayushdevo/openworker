@@ -1532,6 +1532,9 @@
     "wake_show_handoff": "显示交接说明"
   },
   "team": {
+    "advanced": "高级选项",
+    "approval_guidance": "审批指导",
+    "guidance_help": "可在此编辑负责人为每位工作者提出的指导。用于辅助自动审批决策，不会授予工具访问权限或覆盖您的限制。",
     "back_to_session": "返回会话",
     "chat_tagline": "问题与共识 —— 状态见看板",
     "chat_empty": "还没有消息。Agent 只在需要回复时才会在这里发言 —— @提及某位同事即可联系它。",

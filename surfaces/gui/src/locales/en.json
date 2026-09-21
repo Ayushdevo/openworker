@@ -1561,6 +1561,9 @@
     "wake_show_handoff": "show hand-off"
   },
   "team": {
+    "advanced": "Advanced",
+    "approval_guidance": "Approval guidance",
+    "guidance_help": "The lead’s proposed guidance for each worker is editable here. Guides Auto-approve decisions. Does not grant tool access or override your restrictions.",
     "back_to_session": "Back to session",
     "chat_tagline": "questions & consensus — status lives on the board",
     "chat_empty": "No messages yet. Agents post here only when something needs a reply — @mention a coworker to reach it.",

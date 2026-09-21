@@ -76,6 +76,8 @@ export function TeamRequestCard({
   const { t } = useTranslation();
   const [chat, setChat] = useState(!!item.enable_chat);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [guidance, setGuidance] = useState(() => item.members.map(m => m.approval_guidance ?? ""));
   const rosterRef = useRef<HTMLDivElement>(null);
   const [names, setNames] = useState(() =>
     item.members.map((m) => m.name || ""),
@@ -200,6 +202,7 @@ export function TeamRequestCard({
         persona: m.persona,
         ...(names[i] ? { name: names[i].trim() } : {}),
         connectors: (ticked[i] ?? []).filter((c) => allowed.includes(c)),
+        ...(guidance[i] || m.approval_guidance !== undefined ? { approval_guidance: guidance[i] } : {}),
         ...(runnable && picked[i] ? { model: picked[i] } : {}),
       };
     });
@@ -804,6 +807,20 @@ export function TeamRequestCard({
             />
           </div>
         )}
+        <div className="teamreq-advanced">
+          <button type="button" className="teamreq-add" aria-expanded={advanced} data-testid="teamreq-advanced"
+            onClick={() => setAdvanced(value => !value)}>
+            <span aria-hidden="true">{advanced ? "⌄" : "›"}</span> {t("team.advanced")}
+          </button>
+          {advanced && <div className="teamreq-guidance">
+            <p className="proposal-muted">{t("team.guidance_help")}</p>
+            {item.members.map((m, i) => <label key={i}>
+              <span>{t("team.approval_guidance")} · {names[i] || m.persona}</span>
+              <textarea rows={3} maxLength={2400} value={guidance[i]}
+                onChange={event => setGuidance(current => current.map((text, j) => j === i ? event.target.value : text))} />
+            </label>)}
+          </div>}
+        </div>
         <label className="teamreq-chat">
           <input
             type="checkbox"

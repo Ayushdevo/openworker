@@ -178,12 +178,12 @@ def test_prompt_never_claims_shell_writes_are_pre_blocked():
     assert "your verdict is the only check" in text
 
 
-def test_history_is_clipped_hard_with_marker():
+def test_history_preserves_complete_user_messages():
     long = "paste " * 200
     rendered = reviewer_mod.render_history([{"text": long}])
     line = rendered.splitlines()[1]
-    assert len(line) < 250
-    assert "[truncated]" in line
+    assert long in line
+    assert "[truncated]" not in line
 
 
 def test_reply_tag_is_rendered():

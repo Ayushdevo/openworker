@@ -234,6 +234,7 @@ export type Item =
         reason?: string;
         connectors?: string[];
         connector_reasons?: Record<string, string>;
+        approval_guidance?: string;
         // The model this worker WILL run on if the human changes nothing on the card.
         resolved_model?: string;
         // Set when none of the persona's recommended models can run on this machine.

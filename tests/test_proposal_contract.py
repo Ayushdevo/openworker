@@ -122,3 +122,18 @@ async def test_unknown_board_responsibilities_do_not_park_a_card(manager):
     result = await manager.inbox_team_approver("lead-sid", "swe-lead")(proposal, "invalid")
     assert not result["approved"]
     assert not manager.inbox.pending("lead-sid")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("human", [None, "", "Run local tests.\n No pushes."])
+async def test_only_human_returned_guidance_is_saved(manager, human):
+    proposal = team_proposal([{"persona": "test-worker", "name": "maya", "approval_guidance": "Lead suggestion"}])
+    task, prompt = await _parked(manager, manager.inbox_team_approver("lead-sid", "swe-lead")(proposal, "staff"), "Create this team?")
+    assert prompt.data["members"][0]["approval_guidance"] == "Lead suggestion"
+    decision = {"name": "maya", "connectors": []}
+    if human is not None:
+        decision["approval_guidance"] = human
+    manager.inbox.resolve(prompt.id, json.dumps({"approved": True, "members": [decision]}))
+    assert (await task)["approved"]
+    worker = manager.teams.for_lead_session("lead-sid").workers[0]
+    assert worker.approval_guidance == (human or "")

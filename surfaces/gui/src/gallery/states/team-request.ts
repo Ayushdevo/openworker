@@ -58,6 +58,19 @@ function roster(builders: number, testers: number, reviewers: number, docs: numb
 const BIG_OFFER = { "swe-worker": ["github"], "test-worker": ["github"], "review-worker": ["github"], "docs-worker": [] };
 
 export const teamRequestStates: CardState[] = [
+  {
+    id: "approval-guidance", title: "Approval guidance · Advanced",
+    note: "Advanced is collapsed. Expand to review or edit the lead’s guidance before creating the team.",
+    payload: {
+      ...MACHINE,
+      members: [
+        { ...nia, name: "sam", approval_guidance: "Implement the assigned billing fix in your own worktree. Run local checks. Do not push, deploy or send messages." },
+        { ...checks, name: "maya", approval_guidance: "Independently verify acceptance criteria in the local app. Save screenshots in your scratch directory and attach them to the board. No production access." },
+      ],
+      offer: { "swe-worker": ["github"], "test-worker": ["github"] },
+      other_connected: [], enable_chat: true,
+    },
+  },
   { id: "launch-team", title: "Launch team · ten workers", payload: launchTeam },
   {
     id: "lead-suggested-github",

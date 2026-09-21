@@ -17,6 +17,27 @@ const base: TeamReq = {
 describe("TeamRequestCard", () => {
   afterEach(cleanup);
 
+  it("keeps approval guidance collapsed and sends the exact human edit", () => {
+    const onRespond = vi.fn();
+    render(<TeamRequestCard item={{ ...base, members: [{ ...base.members[0], approval_guidance: "Run local tests. No pushes." }] }} onRespond={onRespond} />);
+    expect(screen.queryByLabelText(/Approval guidance/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
+    const input = screen.getByLabelText(/Approval guidance/);
+    expect((input as HTMLTextAreaElement).value).toBe("Run local tests. No pushes.");
+    fireEvent.change(input, { target: { value: "Local tests only.\n No publishing." } });
+    fireEvent.click(screen.getByTestId("teamreq-approve"));
+    expect(onRespond.mock.calls[0][3][0].approval_guidance).toBe("Local tests only.\n No publishing.");
+  });
+
+  it("sends an explicitly cleared paragraph instead of restoring the lead suggestion", () => {
+    const onRespond = vi.fn();
+    render(<TeamRequestCard item={{ ...base, members: [{ ...base.members[0], approval_guidance: "Suggested actions" }] }} onRespond={onRespond} />);
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
+    fireEvent.change(screen.getByLabelText(/Approval guidance/), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("teamreq-approve"));
+    expect(onRespond.mock.calls[0][3][0].approval_guidance).toBe("");
+  });
+
   it("puts name, persona and model on one line and the reason on its own", () => {
     render(<TeamRequestCard item={base} onRespond={vi.fn()} />);
     const row = screen.getByTestId("teamreq-row-0");

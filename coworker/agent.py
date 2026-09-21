@@ -703,6 +703,16 @@ def build_engine(
         return {}
 
     engine.approval_extras = _approval_extras
+    engine.reviewer_context = lambda: {
+        "coworker_definition": {"persona": agent.name, "approval_guidance": agent.approval_guidance},
+        "user_saved_rules": (user_rules() if callable(user_rules) else user_rules) or "",
+    }
+    if agent.team == "worker":
+        engine.reviewer_denial_message = (
+            "This action was blocked by the safety reviewer. Do not retry it or attempt a variation. "
+            "If required for your assignment, comment on the item and transition it to blocked, "
+            "asking the lead to obtain a human decision. Do not use ask_user. Work on other unblocked items."
+        )
     # Auto-Approve reviewer (spec Part 8). Attached only when the user-global flag is on —
     # a repo config can never enable it (`auto_approve` is in _GLOBAL_ONLY_FIELDS, same
     # rule as `auto_allow`). With no reviewer attached, Mode.AUTO_APPROVE behaves exactly

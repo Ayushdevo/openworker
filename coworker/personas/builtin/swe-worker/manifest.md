@@ -8,6 +8,13 @@ requires_folder: true
 subagents: true
 version: "1"
 team: worker
+approval_guidance: >-
+  Implements assigned software tasks in its own checkout: create local worktrees from
+  the shared clone, inspect and edit scoped files, install project-local test/build
+  dependencies, run proportionate baseline and regression checks, and make local commits.
+  Browser checks of the authorized local app and screenshots in assigned scratch are
+  normal verification. A workspace does not authorize credentials, unrelated data or
+  infrastructure changes. Remote writes and deployments need explicit user scope.
 tools: [code_files, git, search, shell, todo]
 # What this worker COULD use (spec §11.6): the consent ceiling for the staffing
 # card and grant_connector. Workers start with nothing on; the human ticks.

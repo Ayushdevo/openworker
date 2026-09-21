@@ -78,6 +78,18 @@ for (const id of (process.env.GALLERY_SCENARIO || "").split(",").map((s) => s.tr
 }
 
 const shots = (process.env.GALLERY_SHOT || "").split(",").map((s) => s.trim()).filter(Boolean);
+for (const place of ["session", "inbox"]) {
+  test(`Advanced approval guidance is editable in ${place}`, async ({ page }) => {
+    await page.goto(`/#/gallery/team-request/approval-guidance?place=${place}`);
+    await expect(page.getByTestId("teamreq-advanced")).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByLabel("Approval guidance · sam")).not.toBeVisible();
+    await page.getByTestId("teamreq-advanced").click();
+    await page.getByLabel("Approval guidance · sam").fill("Local tests only. No remote writes.");
+    await page.getByTestId("teamreq-approve").click();
+    await expect(page.getByTestId("gallery-response")).toContainText("Local tests only. No remote writes.");
+    await expect(page.getByTestId("gallery-response")).toContainText("approval_guidance");
+  });
+}
 for (const shot of shots) {
   test(`screenshot ${shot}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });

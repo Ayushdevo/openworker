@@ -863,6 +863,8 @@ class SessionManager:
             auto_approve_shadow=self.auto_approve_shadow(),
         )
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
+        engine.reviewer_context = lambda: self.approval_context(session_id)
+        engine.reviewer_owner_history = lambda: self.approval_owner_history(session_id, engine)
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
@@ -1653,12 +1655,18 @@ class SessionManager:
             merged = []
             for i, m in enumerate(members):
                 d = decided[i] if i < len(decided) and isinstance(decided[i], dict) else {}
+                guidance = d.get("approval_guidance", "")
+                if not isinstance(guidance, str) or len(guidance) > 2400:
+                    return {"approved": False, "error": "approval_guidance must be text of at most 2400 characters"}
                 merged.append(
                     {
                         **{k: v for k, v in m.items() if k != "connectors"},
                         "name": str(d.get("name", m.get("name", ""))).strip(),
                         "connectors": list(d.get("connectors") or []),
                         "model_by_human": str(d.get("model") or "").strip(),
+                        # Missing human decision means no guidance, never implicit consent
+                        # to the lead's proposal. Preserve edited text exactly.
+                        "approval_guidance": guidance,
                     }
                 )
             resolved = self.inbox.get(item.id)
@@ -2778,8 +2786,9 @@ class SessionManager:
                     continue
                 out.append(
                     {
-                        "persona": pid,
-                        "name": m.name,
+                    "persona": pid,
+                    "name": m.name,
+                    "approval_guidance": m.approval_guidance,
                         "tagline": m.tagline,
                         "models": list(m.models),
                         "recommended_models": list(m.models),  # old name, one release
@@ -2832,7 +2841,8 @@ class SessionManager:
                 return {"error": "steering is unavailable in this surface"}
             asyncio.run_coroutine_threadsafe(
                 manager.deliver_to_session(
-                    match.session_id, f"[Lead] {message}".strip()
+                    match.session_id, f"[Lead] {message}".strip(),
+                    source={"connector": "team", "sender_name": team.lead_actor},
                 ),
                 manager._loop,
             )
@@ -2858,6 +2868,8 @@ class SessionManager:
             return {"approved": False, "error": "this session already leads a team"}
         space = self._space_for(record, record.workspace)
         workers: list[TeamWorker] = []
+        if any(not isinstance(m.get("approval_guidance", ""), str) or len(m.get("approval_guidance", "")) > 2400 for m in members):
+            return {"approved": False, "error": "approval_guidance must be text of at most 2400 characters"}
         used: set[str] = {"lead", "user", "board"}  # reserved handles
         for member in members:
             pid = str((member or {}).get("persona", "")).strip()
@@ -2940,6 +2952,7 @@ class SessionManager:
                     session_id=worker_sid,
                     model=model,
                     reason=str(member.get("reason", "")).strip(),
+                    approval_guidance=member.get("approval_guidance", ""),
                 )
             )
         chat_group = ""
@@ -5457,6 +5470,58 @@ class SessionManager:
         item = self.inbox.get(str(arguments.get("call_id") or ""))
         return item if member and item and item.kind == "approval" and item.session_id == member.session_id else None
 
+    def approval_owner_history(self, session_id: str, engine: TurnEngine) -> tuple[str, list[dict]]:
+        """Worker reviews use direct owner messages from the lead, never lead steering.
+
+        Extraction is mechanical; no instruction classifier or permission summary.
+        """
+        member = self.teams.for_worker_session(session_id)
+        if member:
+            return self.get_engine(member[0].lead_session)._user_history()
+        return engine._user_history()
+
+    def approval_context(self, session_id: str) -> dict:
+        """Explicit, source-labelled reviewer inputs; never script/env contents.
+
+        Resolve at review time so assignments and settings cannot silently go stale.
+        Designer guidance is domain context. Only the staffing gate writes approved
+        worker guidance; steer_worker cannot change it.
+        """
+        record = self.session_store.load(session_id)
+        member = self.teams.for_worker_session(session_id)
+        team = member[0] if member else self.teams.for_lead_session(session_id)
+        persona = member[1].persona if member else (record.agent if record else "")
+        def guidance(pid):
+            entry = self.personas.get(pid) if pid else None
+            return getattr(getattr(entry, "manifest", None), "approval_guidance", "")
+        owner = self.session_store.load(team.lead_session) if team else record
+        actor = member[1].actor if member else (team.lead_actor if team else "")
+        assignments = self.team_store.list_items(
+            team.space, TeamActor(team.lead_actor, TeamRole.LEAD), assignee=actor,
+        ) if team else []
+        engine = self._engines.get(session_id)
+        worker_input = None
+        if member and engine:
+            request, history = engine._user_history()
+            worker_input = {"request": request, "history": history}
+        return {
+            "coworker_definition": {"persona": persona, "approval_guidance": guidance(persona)},
+            "team_definition": {"persona": owner.agent, "approval_guidance": guidance(owner.agent)} if team and owner else None,
+            "user_approved_worker_guidance": member[1].approval_guidance if member else "",
+            "assignments_agent_authored_not_access_grants": [
+                {key: item.get(key) for key in ("id", "title", "description", "criteria", "state", "assignee")}
+                for item in assignments
+            ],
+            "user_saved_rules": self._user_rules_for(owner.session_id) if owner else "",
+            # Includes direct messages sent to the worker, not just its lead. Legacy
+            # unsourced steering is not certified as human-authored by this field.
+            "worker_session_unsourced_input": worker_input,
+            "connectors": sorted(self.effective_connectors(session_id, persona)),
+            "workspace": str(engine.permissions.workspace_root or "") if engine else str(record.workspace or "") if record else "",
+            "working_folders": [{"path": str(p), "writable": w} for p, w in engine.permissions._resolved_roots()] if engine else [],
+            "mode": engine.permissions.mode.value if engine else (record.mode if record else ""),
+        }
+
     def worker_review_context(self, lead_session: str, arguments: dict) -> dict:
         """Resolve exactly one owned, pending call and carry its permission floors.
 
@@ -5499,6 +5564,7 @@ class SessionManager:
                 "category": getattr(spec.metadata, "category", ""),
                 "destination": item.data.get("mcp_destination"),
                 "runtime_facts": getattr(worker, "runtime_facts", {}),
+                "approval_guidance_context": self.approval_context(item.session_id),
             },
         }
 

@@ -79,6 +79,7 @@ class PersonaManifest:
     # personas are NOT team-eligible — team-awareness changes who the prompt talks
     # to, so staffing fails closed on personas without the trait.
     team: Optional[str] = None
+    approval_guidance: str = ""
     default_permission_mode: str = "interactive"
     # `models:` (connectors-across-machines spec §4): the ORDERED list of model ids this
     # coworker may run on. First entry a machine can run = its default there; the
@@ -135,6 +136,7 @@ class PersonaManifest:
             messaging=self.can_chat,
             connectors=self.connectors,
             team=self.team,
+            approval_guidance=self.approval_guidance,
         )
 
 
@@ -345,6 +347,10 @@ def parse_manifest(
             " (omit for a solo coworker)"
         )
 
+    approval_guidance = meta.get("approval_guidance", "")
+    if not isinstance(approval_guidance, str) or len(approval_guidance) > 2400:
+        raise ManifestError("approval_guidance must be text of at most 2400 characters")
+
     tools = _strlist(meta, "tools")
     _validate_tools(persona_id, tools)
     recommends = _recommends(persona_id, meta)
@@ -364,6 +370,7 @@ def parse_manifest(
         messaging=bool(meta.get("messaging", False)),
         connectors=connectors,
         team=team_raw or None,
+        approval_guidance=approval_guidance,
         default_permission_mode=mode,
         models=_models(persona_id, meta),
         skills=_strlist(meta, "skills"),
