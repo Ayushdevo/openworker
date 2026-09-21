@@ -92,6 +92,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("body")
     p.add_argument("--ref", action="append", default=[], dest="refs")
+    p.add_argument("--needs-attention", action="store_true", help="ask the lead for a decision")
 
     p = cmd("assign", _cmd_assign, "assign an item (lead/user)")
     p.add_argument("id", type=int)
@@ -332,7 +333,7 @@ def _cmd_move(args) -> int:
 
 
 def _cmd_comment(args) -> int:
-    _dialect(args).comment(_space(args), args.id, args.body, refs=args.refs)
+    _dialect(args).comment(_space(args), args.id, args.body, refs=args.refs, needs_attention=args.needs_attention)
     print("ok" if not args.json else json.dumps({"ok": True}))
     return 0
 

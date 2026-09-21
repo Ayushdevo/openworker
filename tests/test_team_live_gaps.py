@@ -228,7 +228,8 @@ def test_worker_wait_digest_is_informational_and_wait_only_batch_does_not_wake(
     assert "decide_worker_call" not in body and "your decision" not in body
     assert "lead or user" in body and rows[0]["kind"] == "waiting"
     consumed = []
-    monkeypatch.setattr(manager.team_store, "feed_for", lambda *a: events)
+    monkeypatch.setattr(manager.team_store, "delivery_page", lambda *a, **kw: {
+        "directs": events, "subs": [], "through_seq": 10, "has_more": False})
     monkeypatch.setattr(
         manager.team_store, "consume_feed", lambda *a: consumed.append(a)
     )

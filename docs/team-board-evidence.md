@@ -34,6 +34,35 @@ compaction or restart, start from zero or re-read a known sequence when evidence
 missing. Receiving something earlier does not mean the model still remembers it.
 The existing per-item visibility checks still apply to all comment/proposal reads.
 
+## Quiet coordination
+
+Board storage/visibility and model wake policy are separate. Progress, routine worker
+comments and intermediate attachments remain in the UI/event log without starting a
+lead turn. Publish evidence first, then one `transition(..., to="review", comment=...,
+refs=...)` with the verdict and exact artifact versions: review is the handoff signal.
+Review handoffs use the existing fixed two-second batch, not a sliding debounce.
+
+Blockers and pending approvals/questions wake promptly. `comment(needs_attention=True)`
+is an explicit request for a lead decision; ordinary comments are quiet. CLI users can
+pass `--needs-attention`, and board MCP/HTTP clients have the same boolean field. Human
+notes and lead instructions are not classified by their prose or silently suppressed.
+Cancellation/reassignment can interrupt a busy previous owner; changes requested at
+review wake the assigned worker. A completed prerequisite wakes a worker with live
+dependent work, including when it was that worker's own earlier task.
+
+Acceptance and overall completion do not wake finished workers merely to acknowledge
+them. No board data is deleted. Quiet delivery receipts advance only through a scanned
+log range, never past unseen user instructions; actionable receipts still require
+durable input acceptance, including user-versus-board dispatch and restart races.
+
+Leads finish their turn when waiting for the team. No sleep tool call is required.
+Explicit timers and external monitoring/scheduled-task cadences retain their existing
+semantics. The optional ten-minute watchdog checks for idle unfinished work, not a
+quiet lead with healthy active workers. Pending human decisions, stopped sessions and
+explicit pending wakes suppress it. An unchanged stall is not repeatedly reported in
+the same runtime. Restart starts a fresh observation interval. Set the runtime's
+`TEAM_LEAD_BACKSTOP_SECS` to zero to disable the watchdog; no new GUI setting is added.
+
 The board MCP interface provides equivalent `board_comments`, `board_comment_text`
 and `board_proposal` tools, compact `board_show`, paged `board_list` and small mutation
 receipts. The human CLI/full-detail HTTP views retain their existing full projections.

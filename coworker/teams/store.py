@@ -373,6 +373,41 @@ class TeamStore:
     def consume_feed(self, space: str, actor_id: str, upto_seq: int) -> None:
         self._set_cursor(f"feed:{actor_id}:{space}", int(upto_seq))
 
+    @staticmethod
+    def _subscription_event(event: dict, subscriber: str) -> bool:
+        if event["actor"] == subscriber:
+            return False
+        kind, payload = event["kind"], event["payload"]
+        if kind == ITEM_COMMENTED:
+            return bool(payload.get("needs_attention")) or event.get("actor_role") == "user"
+        if kind == ITEM_TRANSITIONED:
+            return payload.get("to") in ("review", "blocked")
+        if kind == ITEM_ASSIGNED:
+            return bool(payload.get("claimed"))
+        return kind in (ITEM_CREATED, WORKER_WAITING)
+
+    def delivery_page(self, space: str, actor: str, *, is_lead: bool,
+                      feed_after: int = 0, subscription_after: int = 0, limit: int = 200) -> dict:
+        """Read both delivery projections from ONE scanned log range.
+
+        Even quiet/self/status events advance the scan. Never let a subscription
+        cursor leap over an unscanned direct user instruction on a busy board.
+        The caller acknowledges through_seq only after deciding it is quiet or
+        durably accepting the actionable input.
+        """
+        with self._lock:
+            feed = max(feed_after, self._cursor(f"feed:{actor}:{space}"))
+            sub = max(subscription_after, self._cursor(f"sub:{actor}:{space}")) if is_lead else feed
+            events = self.events(space, since_seq=min(feed, sub), limit=limit + 1)
+            page = events[:limit]
+            visible = self._worker_slice(space, actor)
+            directs = [e for e in page if e["seq"] > feed and e["actor"] != actor and (
+                e.get("item_id") in visible or
+                (e["kind"] == ITEM_ASSIGNED and actor in (e["payload"].get("assignee"), e["payload"].get("previous"))))]
+            subs = [e for e in page if e["seq"] > sub and self._subscription_event(e, actor)] if is_lead else []
+            return {"directs": directs, "subs": subs, "through_seq": page[-1]["seq"] if page else 0,
+                    "has_more": len(events) > limit}
+
     # Lead subscriptions: an ALLOWLIST of decision-demanding event classes — a
     # worker moving its item to review/blocked, or filing a new item. Journal
     # appends and routine comments never wake anyone.
@@ -385,12 +420,14 @@ class TeamStore:
         key = f"sub:{subscriber}:{space}"
         events = self.events(
             space,
-            kinds=[ITEM_TRANSITIONED, ITEM_CREATED, ITEM_ASSIGNED, WORKER_WAITING],
+            kinds=[ITEM_TRANSITIONED, ITEM_CREATED, ITEM_ASSIGNED, ITEM_COMMENTED, WORKER_WAITING],
             since_seq=self._cursor(key),
             limit=limit,
         )
         out = []
         for event in events:
+            if event["kind"] == ITEM_COMMENTED and not self._subscription_event(event, subscriber):
+                continue
             if event["actor"] == subscriber:
                 continue  # your own verbs never wake you
             if (
@@ -873,9 +910,12 @@ class TeamStore:
         *,
         refs: Optional[list[str]] = None,
         taint: bool = False,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
         if not (body or "").strip():
             raise BoardError("comment body is required")
+        if not isinstance(needs_attention, bool):
+            raise BoardError("needs_attention must be a boolean")
         with self._lock:
             item = self._item(space, item_id)
             if actor.role == Role.WORKER and item_id not in self._worker_slice(
@@ -891,7 +931,8 @@ class TeamStore:
                 actor,
                 item_id=item_id,
                 case_id=item["case_id"] or None,
-                payload={"body": body, "refs": list(refs or [])},
+                payload={"body": body, "refs": list(refs or []),
+                         **({"needs_attention": True} if needs_attention else {})},
                 taint=taint,
             )
 

@@ -213,12 +213,12 @@ def test_expiry_records_one_receipt_and_no_second_wake(manager):
     assert wake.state == "fired" and wake.context_delivered
 
 
-def test_reopened_review_is_marked_historical(manager):
+def test_reopened_review_no_longer_wakes_lead_for_a_stale_decision(manager):
     space, item = review(manager)
     manager.team_store.transition(space, Actor(id="lead", role=Role.LEAD), item["id"], "in_progress", comment="Needs another test")
     text, rows, receipt = manager._pending_board_context("lead")
-    assert "historical transition; current state: in_progress" in text
-    assert next(r for r in rows if r.get("to") == "review")["historical"] is True
+    assert text == "" and rows == []
+    assert receipt["feed"] > 0  # still acknowledged without deleting audit history
 
 
 def test_failed_delivery_keeps_due_timer(manager, monkeypatch):

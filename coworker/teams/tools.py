@@ -97,6 +97,7 @@ def board_tools(
     taint: Callable[[], bool] = lambda: False,
     attachments=None,
     roots: Callable[[], list] = lambda: [],
+    on_change: Callable[[], None] = lambda: None,
 ) -> list:
     """The board verbs for one agent, pre-bound to its space and identity.
 
@@ -104,6 +105,11 @@ def board_tools(
     (a worker never even sees `assign`), and the store re-checks every call —
     the tool layer is convenience, the store is the gate.
     """
+
+    def receipt(result: dict, *, notify: bool = True) -> dict:
+        if "error" not in result and notify:
+            on_change()
+        return mutation_receipt(result)
 
     def create_item(
         title: str,
@@ -117,7 +123,7 @@ def board_tools(
         before the item can be done; required. `parent` links it under another
         item; `case` names its journal case (children inherit the parent's case
         by default)."""
-        return item_snapshot(_call(
+        result = _call(
             store.create_item,
             space,
             actor,
@@ -126,7 +132,10 @@ def board_tools(
             description=description,
             parent=parent,
             case=case or None,
-        ))
+        )
+        if "error" not in result:
+            on_change()
+        return item_snapshot(result)
 
     def list_items(state: str = "", assignee: str = "", after_item: int = 0, limit: int = 50) -> dict:
         """List work items on the board, optionally filtered by state
@@ -148,7 +157,7 @@ def board_tools(
         """Set a one-line progress description (at most 80 characters) on an item
         currently assigned to you. Explicit item id required. Display only: does
         not change state, wake the lead, or replace evidence and review."""
-        return mutation_receipt(_call(store.set_status, space, actor, item, text))
+        return receipt(_call(store.set_status, space, actor, item, text), notify=False)
 
     def get_item(item: int) -> dict:
         """Read current task details, acceptance criteria, links and evidence refs,
@@ -189,7 +198,7 @@ def board_tools(
         in_progress, blocked, or review (attach the blocker or a hand-off summary
         as `comment`, and artifact pointers — branch, report, session — as
         `refs`); done requires review verification first."""
-        return mutation_receipt(_call(
+        return receipt(_call(
             store.transition,
             space,
             actor,
@@ -200,11 +209,14 @@ def board_tools(
             taint=taint(),
         ))
 
-    def comment(item: int, body: str, refs: Optional[list] = None) -> dict:
+    def comment(item: int, body: str, refs: Optional[list] = None, needs_attention: bool = False) -> dict:
         """Add a comment to a work item. Comments are durable and attributed —
         answers that matter belong here, not in chat. `refs` attach artifact
-        pointers (branch, PR, report, file:line) to the item."""
-        return mutation_receipt(_call(
+        pointers (branch, PR, report, file:line) to the item. Routine notes do NOT
+        wake the lead. Set needs_attention=True for an explicit question/decision;
+        blockers use transition to blocked. Publish evidence first, then one
+        concise transition to review with its artifact refs: that is the handoff."""
+        return receipt(_call(
             store.comment,
             space,
             actor,
@@ -212,23 +224,24 @@ def board_tools(
             body,
             refs=[str(ref) for ref in refs or []],
             taint=taint(),
+            needs_attention=needs_attention,
         ))
 
     def claim(item: int) -> dict:
         """Claim an open, unassigned work item for yourself. First claim wins;
         the item becomes your assignment. Only claim work you can start on —
         the lead sees every claim and can reassign."""
-        return mutation_receipt(_call(store.claim, space, actor, item))
+        return receipt(_call(store.claim, space, actor, item))
 
     def assign(item: int, assignee: str) -> dict:
         """Assign a work item to a worker coworker. The item itself becomes the
         worker's assignment — write the description and criteria accordingly."""
-        return mutation_receipt(_call(store.assign, space, actor, item, assignee))
+        return receipt(_call(store.assign, space, actor, item, assignee))
 
     def link(src: int, kind: str, dst: int) -> dict:
         """Link two work items: kind `parent` (dst becomes src's parent) or
         `blocks` (src blocks dst)."""
-        return mutation_receipt(_call(store.link, space, actor, src, kind, dst))
+        return receipt(_call(store.link, space, actor, src, kind, dst))
 
     def attach_image(item: int, path: str, caption: str = "") -> dict:
         """Attach a screenshot or image file (png/jpg/gif/webp, ≤10MB) to a work

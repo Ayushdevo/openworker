@@ -139,10 +139,12 @@ def build(dialect, *, space: str):
         )
 
     @mcp.tool()
-    def board_comment(item: int, body: str, refs: list[str] = []) -> Any:
+    def board_comment(item: int, body: str, refs: list[str] = [], needs_attention: bool = False) -> Any:
         """Comment on a work item — durable and attributed; answers that matter
-        belong here. `refs` attach artifact pointers."""
-        return _safe(dialect.comment, space, item, body, refs=list(refs or []))
+        belong here. Routine notes are quiet; needs_attention=True wakes the lead
+        for an explicit question/decision. Review transitions are the handoff.
+        `refs` attach artifact pointers."""
+        return _safe(dialect.comment, space, item, body, refs=list(refs or []), needs_attention=needs_attention)
 
     @mcp.tool()
     def board_attach(item: int, path: str, caption: str = "") -> Any:

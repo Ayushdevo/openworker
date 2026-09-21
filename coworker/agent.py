@@ -451,6 +451,15 @@ def build_engine(
         instructions += "\n\n" + PROPOSAL_GUIDANCE
     if agent.team in ("lead", "worker"):
         instructions += (
+            "\n\nTeam coordination is event-driven: finish your turn when there is nothing "
+            "actionable. Do not poll or schedule routine sleeps just to check teammates. "
+            "User-requested schedules and external monitoring cadences still apply. "
+            "Routine notes and intermediate artifact publications remain on the board without "
+            "waking the lead. For a question needing a decision, use comment(needs_attention=True); "
+            "for a blocker transition to blocked. Publish evidence first, then submit ONE concise "
+            "review transition carrying the verdict and exact artifact versions/refs. This is the "
+            "handoff signal: do not send duplicate chat or a second copy of the report. "
+            "Completed workers need not acknowledge acceptance or overall team completion. "
             "\n\nBoard efficiency: get_item reads current task details, not its comment history. "
             "Read the exact comment sequence cited in a wake with get_item_comment, or new "
             "comments with get_item_comments(after_seq); follow pagination. Read get_proposal "

@@ -236,8 +236,9 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
 
     def sleep_for(seconds: int, note: str = "") -> dict:
         """Suspend and wake this session after `seconds` (a relative wait: "check again in
-        5 minutes" is sleep_for(300)). Use it for polling/waiting without burning context
-        while idle. Replaces the previous sleep. Earlier board/user activity cancels
+        5 minutes" is sleep_for(300)). Use for an explicit timed check, not routine
+        team polling: board decisions already wake a lead that finishes its turn.
+        Replaces the previous sleep. Earlier board/user activity cancels
         it and carries your optional reminder note forward. No clock arithmetic needed."""
         secs = int(seconds)
         if secs <= 0:

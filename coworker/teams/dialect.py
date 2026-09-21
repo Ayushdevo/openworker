@@ -76,6 +76,7 @@ class BoardDialect(Protocol):
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]: ...
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]: ...
     def claim(self, space: str, item_id: int) -> dict[str, Any]: ...
@@ -202,8 +203,9 @@ class LocalDialect:
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
-        return self.store.comment(space, self.actor, item_id, body, refs=refs)
+        return self.store.comment(space, self.actor, item_id, body, refs=refs, needs_attention=needs_attention)
 
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]:
         return self.store.assign(space, self.actor, item_id, assignee)
@@ -439,10 +441,11 @@ class RemoteDialect:
         body: str,
         *,
         refs: Optional[list[str]] = None,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
         return self._post(
             "/v1/board/items/comment",
-            {"space": space, "id": item_id, "body": body, "refs": refs or []},
+            {"space": space, "id": item_id, "body": body, "refs": refs or [], "needs_attention": needs_attention},
         )
 
     def assign(self, space: str, item_id: int, assignee: str) -> dict[str, Any]:

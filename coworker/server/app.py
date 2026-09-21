@@ -972,16 +972,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/board/items/comment")
     def board_comment_item(request: Request, body: dict):
         body = body or {}
-        return _board(
-            request,
-            lambda actor: manager.team_store.comment(
+        def run(actor):
+            result = manager.team_store.comment(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("body", "")),
                 refs=[str(ref) for ref in body.get("refs") or []],
-            ),
-        )
+                needs_attention=body.get("needs_attention", False),
+            )
+            manager.kick_team_tick()
+            return result
+        return _board(request, run)
 
     @app.post("/v1/board/items/assign")
     def board_assign_item(request: Request, body: dict):
