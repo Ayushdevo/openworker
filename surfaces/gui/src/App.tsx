@@ -944,6 +944,7 @@ export function App() {
           ]);
           break;
         case "permission_required":
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           // Unattended → the backend parked it in the Inbox; don't also surface a live card.
           if (unattendedRef.current) break;
           setItems((p) => [...p, approvalItemFromPayload(d)]);
@@ -963,6 +964,7 @@ export function App() {
         case "team_proposed":
           // The staffing gate (agent teams) — approval pre-spawns the worker sessions.
           if (unattendedRef.current) break;
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           setItems((p) => [...p, teamItemFromPayload(d)]);
           break;
         case "connector_requested":
@@ -973,6 +975,7 @@ export function App() {
         case "items_proposed":
           // The decomposition gate — approval creates the items on the board.
           if (unattendedRef.current) break;
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           setItems((p) => [...p, workItemsItemFromPayload(d)]);
           break;
         case "question_requested":
@@ -980,7 +983,7 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
-          if (d.tool_call_id && (d.name === "propose_team" || d.name === "propose_work_items")) {
+          if (d.tool_call_id) {
             const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
             calls.add(d.tool_call_id);
             finishedGateCalls.current.set(gateScope, calls);
@@ -1292,6 +1295,13 @@ export function App() {
       const current = ++request;
       getInbox(sessionId).then(inbox => {
         if (canceled || current !== request) return;
+        // Persist authoritative resolutions too: another in-flight pending-only
+        // fetch or a late gate event must not resurrect an already answered call.
+        const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+        for (const item of inbox) {
+          if (item.state === "resolved" && item.tool_call_id) calls.add(item.tool_call_id);
+        }
+        finishedGateCalls.current.set(gateScope, calls);
         setSessionInbox(pendingInbox(inbox));
         setItems(items => reconcileResolvedGates(items, inbox));
       }).catch(() => {});
@@ -1302,7 +1312,7 @@ export function App() {
     load();
     const t = setInterval(load, 4000);
     return () => { canceled = true; clearInterval(t); };
-  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox]);
+  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox, gateScope]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no

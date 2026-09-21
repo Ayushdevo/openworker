@@ -1,6 +1,74 @@
 import { expect } from "@playwright/test";
 import { test, sendSessionEvent } from "./fixtures";
 
+for (const tool of ["run_shell", "decide_worker_call"]) {
+  for (const resolution of ["allow", "deny"]) {
+    test(`${tool}: ${resolution} completion cannot be resurrected by a delayed pending poll`, async ({ page }) => {
+      let staleSnapshot = false;
+      let servedStale = 0;
+      const args = tool === "run_shell" ? { command: "printf verified" } : {
+        worker: "Maya", call_id: "worker-prompt", decision: "allow", note: "Check the assigned task.",
+      };
+      const workerCall = tool === "decide_worker_call" ? {
+        worker: "Maya", tool: "run_shell", arguments: { command: "printf verified" }, state: "pending",
+      } : undefined;
+      await page.route("**/v1/inbox?**", async route => {
+        if (staleSnapshot) {
+          if (new URL(route.request().url()).searchParams.has("session_id")) servedStale++;
+          await route.fulfill({ json: { items: [{ id: "answered-gate", kind: "approval", state: "pending",
+            tool_call_id: "answered-call", title: "Approve action?", data: { tool, arguments: args,
+              worker_call: workerCall, worker_prompt_id: workerCall ? "worker-prompt" : undefined } }] } });
+        } else await route.fulfill({ json: { items: [] } });
+      });
+      await page.goto("/");
+      await sendSessionEvent(page, { type: "permission_required", data: {
+        name: tool, tool_call_id: "answered-call", arguments: args, worker_call: workerCall,
+      } });
+      const button = page.getByRole("button", { name: tool === "run_shell" ? "Allow once" : "Allow it, as the lead suggests", exact: true });
+      await expect(button).toBeVisible();
+      await sendSessionEvent(page, { type: "tool_finished", data: {
+        name: tool, tool_call_id: "answered-call", status: resolution === "allow" ? "ok" : "denied",
+      } });
+      await expect(button).toHaveCount(0);
+      staleSnapshot = true;
+      await expect.poll(() => servedStale, { timeout: 6000 }).toBeGreaterThan(0);
+      await page.waitForTimeout(300);
+      await expect(button).toHaveCount(0);
+      await sendSessionEvent(page, { type: "permission_required", data: {
+        name: tool, tool_call_id: "answered-call", arguments: args, worker_call: workerCall,
+      } });
+      await expect(button).toHaveCount(0);
+      // An identical-looking NEW request is still actionable.
+      await sendSessionEvent(page, { type: "permission_required", data: {
+        name: tool, tool_call_id: "next-call", arguments: args, worker_call: workerCall,
+      } });
+      await expect(button).toBeVisible();
+    });
+  }
+}
+
+test("worker decision polling retires an externally answered proxy without a completion event", async ({ page }) => {
+  let resolved = false;
+  await page.route("**/v1/inbox?**", route => route.fulfill({ json: { items: resolved ? [{
+    id: "lead-proxy", tool_call_id: "proxy-call", state: "resolved", kind: "approval", resolution: "allow",
+  }] : [] } }));
+  await page.goto("/");
+  await sendSessionEvent(page, { type: "permission_required", data: {
+    name: "decide_worker_call", tool_call_id: "proxy-call",
+    arguments: { worker: "Maya", call_id: "worker-prompt", decision: "allow" },
+    worker_call: { worker: "Maya", tool: "run_shell", arguments: { command: "printf verified" }, state: "pending" },
+  } });
+  await expect(page.getByTestId("workerdec-card")).toBeVisible();
+  resolved = true;
+  await expect(page.getByTestId("workerdec-card")).toHaveCount(0, { timeout: 7000 });
+  await sendSessionEvent(page, { type: "permission_required", data: {
+    name: "decide_worker_call", tool_call_id: "proxy-call",
+    arguments: { worker: "Maya", call_id: "worker-prompt", decision: "allow" },
+    worker_call: { worker: "Maya", tool: "run_shell", arguments: { command: "printf verified" }, state: "pending" },
+  } });
+  await expect(page.getByTestId("workerdec-card")).toHaveCount(0);
+});
+
 test("ordinary approval answered elsewhere retires on exact tool completion", async ({ page }) => {
   await page.goto("/");
   await sendSessionEvent(page, { type: "permission_required", data: {
