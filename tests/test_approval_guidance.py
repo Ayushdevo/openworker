@@ -88,3 +88,20 @@ def test_guidance_registry_roundtrip(tmp_path):
     team = registry.create(space="acme", lead_session="lead", lead_actor="lead", workers=[
         TeamWorker("sam", "swe-worker", "worker", approval_guidance="Tests only.\n No publishing.")])
     assert TeamRegistry(path).get(team.team_id).workers[0].approval_guidance == "Tests only.\n No publishing."
+
+
+def test_missing_owner_does_not_create_a_replacement_session(manager, monkeypatch):
+    lead, _ = lead_for_review(manager, monkeypatch)
+    worker = manager.get_engine("worker", agent="swe-worker")
+    original = manager.session_store.load
+    monkeypatch.setattr(manager.session_store, "load", lambda sid: None if sid == "lead" else original(sid))
+    assert worker._review_inputs() == ("", [], {"context_unavailable": True})
+
+
+def test_direct_worker_restrictions_are_not_lost_in_delegated_review(manager, monkeypatch):
+    lead_for_review(manager, monkeypatch)
+    worker = manager.get_engine("worker", agent="swe-worker")
+    worker.messages.append({"role": "user", "content": "Do not run the database tests."})
+    _, request = request_for(manager)
+    context = manager.worker_review_context("lead", request.arguments)["context"]["approval_guidance_context"]
+    assert context["worker_session_unsourced_input"]["request"] == "Do not run the database tests."

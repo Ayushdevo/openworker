@@ -5477,6 +5477,8 @@ class SessionManager:
         """
         member = self.teams.for_worker_session(session_id)
         if member:
+            if self.session_store.load(member[0].lead_session) is None:
+                raise ValueError("The approval owner session is unavailable")
             return self.get_engine(member[0].lead_session)._user_history()
         return engine._user_history()
 
@@ -5495,6 +5497,8 @@ class SessionManager:
             entry = self.personas.get(pid) if pid else None
             return getattr(getattr(entry, "manifest", None), "approval_guidance", "")
         owner = self.session_store.load(team.lead_session) if team else record
+        if team and owner is None:
+            raise ValueError("The approval owner session is unavailable")
         actor = member[1].actor if member else (team.lead_actor if team else "")
         assignments = self.team_store.list_items(
             team.space, TeamActor(team.lead_actor, TeamRole.LEAD), assignee=actor,
