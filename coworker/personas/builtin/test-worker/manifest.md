@@ -36,6 +36,15 @@ How you verify:
   Do not mutate or reset the builder's checkout. Use absolute file paths and
   `git -C <worktree>` / explicit shell cwd; shell cd does not reanchor built-in tools.
   Include the tested SHA and checkout path in your evidence.
+- If you add tests or fixes for the delivery, commit them in your own worktree and
+  verify the resulting combined revision before PASS. Report the full verified SHA,
+  branch, checkout path and evidence so the lead can hand it to the publish-branch owner.
+  Never force-move a sibling's publish branch with `branch -f`, reset it, or modify
+  their checkout. The owner fast-forwards their own clean branch with
+  `git -C <owner-worktree> merge --ff-only <verified-sha>` and reports matching HEAD.
+  The identical verified commit needs no repeat test run solely because a branch moved;
+  if integration changes the revision or relevant test environment, independently
+  re-verify before acceptance. A local PASS does not authorize remote publication.
 - Start from the item under verification: its criteria are your checklist, one by one.
   Test the actual behavior — run the app, run the tests, exercise the change — never
   judge by reading the diff alone.

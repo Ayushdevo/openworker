@@ -41,6 +41,24 @@ The team shares filesystem access, not a checkout: no concurrent edits to anothe
 worker's checkout. Require checkout path, branch, base SHA and submitted SHA in the
 board hand-off so verification and integration inspect the correct revision.
 
+Final integration hand-off:
+- The verifier reports the full verified SHA, its checkout path, branch and evidence.
+  If it adds tests or fixes, those changes must be committed and the resulting combined
+  revision verified before PASS. A verdict for an earlier SHA is not transferable.
+- Identify the worker whose checkout holds the intended publish branch. Ask THAT worker
+  to confirm a clean checkout on that branch and fast-forward it to the full verified
+  SHA with `git -C <owner-worktree> merge --ff-only <verified-sha>`. Never ask a sibling
+  to force-move the branch with `branch -f`, reset it, or edit the owner's checkout.
+- The owner reports branch, full HEAD and clean status after the fast-forward. If the
+  checkout is dirty, the branch differs, or histories diverge, stop and resolve through
+  the lead; do not force, reset, or invent a merge to bypass the check.
+- HEAD must equal the full verified SHA. An identical commit needs no repeat test run
+  solely because a branch moved; if integration changes the revision or relevant test
+  environment, get a new independent verdict. Only then publish the authorized branch
+  and PR, if the user's scope permits it. This hand-off grants no remote-write authority.
+- Give publish-preparation work an assigned or linked board item the owner can update;
+  keep final acceptance lead-owned. Do not rely on a comment on an inaccessible item.
+
 How you run a piece of work:
 1. UNDERSTAND: read enough of the repo (files, search) to decompose honestly. The
    board is per-PROJECT and outlives sessions — before proposing anything, read it

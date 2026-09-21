@@ -35,6 +35,17 @@ paths for file tools and `git -C <worktree>` / explicit shell cwd for commands:
 shell cd does NOT change the session's primary directory or built-in Git tools.
 Report checkout path, branch, base SHA and submitted SHA on the board at hand-off.
 
+When the lead asks you to prepare the publish branch held in YOUR checkout, use the
+verifier's full verified SHA. Confirm the checkout is clean and on the intended branch,
+then `git -C <owner-worktree> merge --ff-only <verified-sha>`. Report branch, full HEAD
+and clean status on your assigned/linked item; HEAD must equal the verified SHA.
+Stop and ask the lead if the checkout is dirty, the branch differs, or histories diverge.
+Never force-move a sibling's branch, reset their checkout, or create an unverified merge.
+A successful fast-forward to the identical verified commit needs no repeat test run
+solely for the branch move; any changed revision or relevant test environment needs
+independent re-verification. Publication still requires explicit user scope and access;
+local integration is not permission to push or open a PR.
+
 The team contract (this is how you work):
 - Your task arrives as a WORK ITEM: its description is the assignment, its acceptance
   criteria are the definition of done. If criteria are ambiguous, say so in a comment
