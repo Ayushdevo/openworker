@@ -959,7 +959,7 @@ export async function cloudLogout(): Promise<{ ok: boolean }> {
 
 export async function connectManaged(
   name: string,
-  options?: { access?: "read" | "write" },
+  options?: { access?: "read" | "write"; flow?: "install" },
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(
     `${httpBase()}/v1/connectors/${encodeURIComponent(name)}/connect-managed`,
@@ -967,10 +967,11 @@ export async function connectManaged(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // `access` names a broker-defined consent tier (hubspot read | write).
-      // GitHub needs no flow choice: the broker is authorize-first — one connect
-      // links an existing App installation or redirects on to the install page.
+      // Normal connect links existing grants; explicit Add installation opens
+      // GitHub's account/repository consent picker even when grants already exist.
       body: JSON.stringify({
         ...(options?.access ? { access: options.access } : {}),
+        ...(name === "github" && options?.flow ? { flow: options.flow } : {}),
       }),
     },
   );
