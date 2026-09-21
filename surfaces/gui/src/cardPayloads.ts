@@ -22,6 +22,7 @@ export type QuestionItem = Extract<Item, { kind: "question" }>;
 export function approvalItemFromPayload(d: any): ApprovalItem {
   return {
     kind: "approval",
+    toolCallId: typeof d.tool_call_id === "string" ? d.tool_call_id : undefined,
     name: d.name,
     args: d.arguments,
     reason: d.reason,

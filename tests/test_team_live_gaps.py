@@ -252,6 +252,23 @@ def test_superseded_gate_never_executes_or_grants_permission(tmp_path):
     assert "already resolved" in finished[0].data["result_preview"]
 
 
+@pytest.mark.parametrize("answer", [ApprovalOutcome.ONCE, ApprovalOutcome.DENY, ApprovalOutcome.SUPERSEDED])
+def test_ordinary_approval_and_completion_carry_the_same_exact_call_id(tmp_path, answer):
+    async def approve(request):
+        assert request.tool_call_id == "unique-write-call"
+        return answer
+
+    engine, _ = _engine(tmp_path, [
+        _tool_turn("write_file", {"path": "result.txt", "content": "sample"}, call_id="unique-write-call"),
+        _text_turn("Finished"),
+    ], approver=approve)
+    events = _collect(engine, "Write the sample file.")
+    for kind in ("permission_required", "tool_finished"):
+        event = next(e for e in events if e.type.value == kind)
+        assert event.data["tool_call_id"] == "unique-write-call"
+    assert (tmp_path / "result.txt").exists() == (answer is ApprovalOutcome.ONCE)
+
+
 def test_background_delivery_enriches_actual_permission_event_and_retires_gate(
     manager, monkeypatch
 ):

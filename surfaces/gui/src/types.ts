@@ -161,6 +161,7 @@ export type Item =
   | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string }
   | {
       kind: "approval";
+      toolCallId?: string;
       name: string;
       args: any;
       reason: string;

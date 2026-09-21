@@ -1086,6 +1086,7 @@ class TurnEngine:
             allowed = False
             async for item in self._authorize(tool_call):
                 if isinstance(item, Event):
+                    item.data["tool_call_id"] = tool_call.id
                     yield item
                 else:
                     allowed = item
@@ -1159,7 +1160,7 @@ class TurnEngine:
         )
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+            {"name": tool_call.name, "tool_call_id": tool_call.id, "status": "interrupted", "reason": "stopped"},
         )
 
     def _parallel_safe(self, tool_call: ToolCall) -> bool:
@@ -1926,6 +1927,7 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
+                "tool_call_id": tool_call.id,
                 "result_preview": _preview(result),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),

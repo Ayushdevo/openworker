@@ -65,6 +65,7 @@ export function approvalItemFromParked(item: InboxItem): Extract<Item, { kind: "
   if (item.kind !== "approval" || !d?.tool) return null;
   return {
     kind: "approval",
+    toolCallId: item.tool_call_id || undefined,
     name: String(d.tool),
     args: d.arguments ?? {},
     escalation: d.escalation,

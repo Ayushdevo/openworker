@@ -1,6 +1,37 @@
 import { expect } from "@playwright/test";
 import { test, sendSessionEvent } from "./fixtures";
 
+test("ordinary approval answered elsewhere retires on exact tool completion", async ({ page }) => {
+  await page.goto("/");
+  await sendSessionEvent(page, { type: "permission_required", data: {
+    name: "github_clone", tool_call_id: "clone-old", arguments: { owner: "acme", repo: "billing-service" },
+  } });
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+  await sendSessionEvent(page, { type: "tool_finished", data: {
+    name: "github_clone", tool_call_id: "unrelated", status: "ok",
+  } });
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+  await sendSessionEvent(page, { type: "tool_finished", data: {
+    name: "github_clone", tool_call_id: "clone-old", status: "ok",
+  } });
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
+});
+
+test("ordinary approval answered elsewhere retires through poll when completion is missed", async ({ page }) => {
+  let resolved = false;
+  await page.route("**/v1/inbox?**", async route => {
+    await route.fulfill({ json: { items: resolved ? [{ id: "clone-gate", kind: "approval", state: "resolved",
+      tool_call_id: "clone-poll", resolution: "deny" }] : [] } });
+  });
+  await page.goto("/");
+  await sendSessionEvent(page, { type: "permission_required", data: {
+    name: "github_clone", tool_call_id: "clone-poll", arguments: { owner: "acme", repo: "billing-service" },
+  } });
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+  resolved = true;
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0, { timeout: 10000 });
+});
+
 for (const suggestion of ["allow", "deny"]) {
   test(`overriding a lead ${suggestion} answers the exact worker request`, async ({ page }) => {
     const answers: Array<{ id: string; resolution: string }> = [];
