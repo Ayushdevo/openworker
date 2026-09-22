@@ -196,8 +196,11 @@ def copy_in(
         _copy_private(g.path, dst)
         hosts += g.hosts
         if g.name == "ssh":
-            env.update(_prepare_ssh(dst, os.path.join(os.path.realpath(runtime_dir), "bin"), ssh_proxy_command))
-            path_dirs.append(os.path.join(os.path.realpath(runtime_dir), "bin"))
+            # The wrapper lives INSIDE the sandbox home, which every provider carries in.
+            bin_dir = os.path.join(sandbox_home, "bin")
+            env.update(_prepare_ssh(dst, bin_dir, ssh_proxy_command))
+            env["OPENWORKER_PATH_PREPEND"] = bin_dir  # the runner daemon puts it first on PATH
+            path_dirs.append(bin_dir)
         elif g.name == "gh":
             env["GH_CONFIG_DIR"] = dst
         elif g.name == "aws":

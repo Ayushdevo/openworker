@@ -7,6 +7,7 @@ Runs as `python -m coworker.sandbox.runner ...` from a checkout, or as
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .daemon import RUNNER_VERSION, Daemon
@@ -26,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     attach.add_argument("--silence-seconds", type=float, default=None, help="leave after this much client silence (0 = never)")
     args = parser.parse_args(argv)
     if args.command == "serve":
+        # A provider may put a folder of its own first on PATH (the ssh wrapper that points
+        # at a copied credential, section 11b) without knowing the sandbox's own PATH.
+        prepend = os.environ.pop("OPENWORKER_PATH_PREPEND", "")
+        if prepend:
+            os.environ["PATH"] = prepend + os.pathsep + os.environ.get("PATH", "")
         Daemon(args.socket, args.cwd, args.exit_with_parent).serve_forever()
         return 0
     if args.silence_seconds is None:

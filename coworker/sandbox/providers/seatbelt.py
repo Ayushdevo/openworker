@@ -141,8 +141,6 @@ class SeatbeltProvider:
         env = clean_environment()
         if self.copied is not None:
             env.update(self.copied.env)  # HOME is the sandbox's own; the copies live there
-            if self.copied.path_dirs:
-                env["PATH"] = os.pathsep.join([*self.copied.path_dirs, env.get("PATH", "")])
         tmp = os.path.join(self._dir, "tmp")
         env["TMPDIR"] = tmp + "/"
         for variable, folder in _CACHE_VARIABLES.items():

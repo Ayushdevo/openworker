@@ -95,7 +95,7 @@ def test_copy_in_makes_a_private_home_and_the_tools_environment(tmp_path):
     assert f"IdentityFile {sb / '.ssh' / 'id_ed25519'}" in config and "IdentityAgent none" in config
     assert config.endswith("Host work\n  HostName git.example.com\n")  # the user's own config still there, after ours
     assert copied.env["GIT_SSH_COMMAND"] == f'/usr/bin/ssh -F "{sb / ".ssh" / "config"}"'
-    assert (run / "bin" / "ssh").read_text().startswith("#!/bin/sh") and copied.path_dirs == [str(run / "bin")]
+    assert (sb / "bin" / "ssh").read_text().startswith("#!/bin/sh") and copied.env["OPENWORKER_PATH_PREPEND"] == str(sb / "bin")
     assert copied.env["HOME"] == str(sb)
     assert copied.env["GH_CONFIG_DIR"] == str(sb / ".config" / "gh")
     assert copied.env["AWS_SHARED_CREDENTIALS_FILE"] == str(sb / ".aws" / "credentials")
@@ -198,7 +198,7 @@ def test_ssh_and_gh_copies_work_inside_seatbelt_and_ssh_goes_through_the_proxy(t
         assert ws.describe()["credentials"][0]["name"] == "ssh"
         assert "SSH keys" in ws.context()
         # ssh: the ProxyCommand in the copied config carries the connection through the proxy
-        assert run("command -v ssh")["output"].strip() == os.path.join(provider._dir, "bin", "ssh")  # the wrapper wins
+        assert run("command -v ssh")["output"].strip() == os.path.join(provider.copied.home, "bin", "ssh")  # the wrapper wins
         out = run("ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -v git@github.com true 2>&1 | grep -i 'remote protocol version\\|proxy\\|banner' | head -3")
         assert "SSH-2.0-OpenSSH_9.9 fake" in out["output"] or "Remote protocol version 2.0" in out["output"], out["output"]
     finally:

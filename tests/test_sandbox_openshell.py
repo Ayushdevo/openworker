@@ -242,3 +242,48 @@ def test_a_sandbox_left_behind_by_a_dead_server_is_removed(folder):
     assert orphan.sandbox_name in names()
     removed = SandboxRegistry().reap()
     assert orphan.sandbox_name in removed and orphan.sandbox_name not in names()
+
+
+@live
+def test_credential_grants_are_copied_into_a_real_sandbox(folder):
+    """A fake `.ssh` and `.config/gh` under a made-up home are granted: inside, HOME is the
+    copy, the files are readable, git and ssh are pointed at the copy, the grant's hosts are
+    in the policy, and the real home stays hidden (design doc, section 11b)."""
+    from coworker.sandbox import credentials as creds
+
+    home = folder / "fakehome"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("PRIVATE KEY\n")
+    (home / ".ssh" / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (home / ".config" / "gh").mkdir(parents=True)
+    (home / ".config" / "gh" / "hosts.yml").write_text("github.com:\n  oauth_token: gho_x\n")
+    (home / ".gitconfig").write_text("[user]\n\tname = Sam\n\temail = sam@example.com\n")
+    grants = creds.granted([{"name": "ssh", "enabled": True}, {"name": "gh", "enabled": True}], home=str(home))
+    project = folder / "project"
+    project.mkdir()
+    from coworker.roots import RootDir
+    from coworker.sandbox.providers.openshell import OpenShellProvider
+    from coworker.sandbox.workspace import RunnerWorkspace
+
+    provider = OpenShellProvider(roots=[{"path": str(project), "writable": True}], cwd=str(project), credentials=grants)
+    ws = RunnerWorkspace(provider, cwd=project, live_roots=[RootDir(path=project, writable=True)])
+    try:
+        ex = ws.executor
+        copy = provider.copied.home
+        assert ex.run("echo $HOME")["output"].strip() == copy
+        assert "PRIVATE KEY" in ex.run("cat ~/.ssh/id_ed25519")["output"]
+        assert "gho_x" in ex.run('cat "$GH_CONFIG_DIR/hosts.yml"')["output"]
+        assert "IdentityFile" in ex.run("cat ~/.ssh/config")["output"]
+        assert "-F" in ex.run("echo $GIT_SSH_COMMAND")["output"]
+        hidden = ex.run(f"ls {home}/.ssh 2>&1")["output"].lower()
+        assert "denied" in hidden or "no such file" in hidden  # the real files stay hidden (not mounted at all)
+        assert "SSH keys" in ws.context() and ws.describe()["credentials"][0]["name"] == "ssh"
+        import yaml
+
+        policy = yaml.safe_load((Path(provider._tmp) / "policy.yaml").read_text())
+        hosts = {(e["host"], e["port"]) for e in policy["network_policies"]["credentials"]["endpoints"]}
+        assert ("github.com", 22) in hosts and ("api.github.com", 443) in hosts
+        assert copy in policy["filesystem_policy"]["read_write"]
+    finally:
+        ws.close()
+    assert not Path(copy).exists()  # the copies died with the sandbox
