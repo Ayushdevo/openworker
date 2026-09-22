@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..bundle import build_runner_zipapp
+from ..launch import runner_command
 from ..transport import PipeTransport, Transport
 
 
@@ -38,7 +39,7 @@ class RunnerLocalProvider:
 
     def create(self) -> None:
         self._daemon = subprocess.Popen(
-            [sys.executable, "-S", str(self._runner), "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent"],
+            [*runner_command(self._runner), "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -53,7 +54,7 @@ class RunnerLocalProvider:
             time.sleep(0.02)
 
     def open_runner(self) -> Transport:
-        argv = [sys.executable, "-S", str(self._runner), "attach", "--socket", self.socket_path]
+        argv = [*runner_command(self._runner), "attach", "--socket", self.socket_path]
         if self._relay_silence is not None:
             argv += ["--silence-seconds", str(self._relay_silence)]
         return PipeTransport(

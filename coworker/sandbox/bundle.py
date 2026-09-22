@@ -8,6 +8,7 @@ mount that folder into a sandbox whether the server runs on the host or in a san
 
 from __future__ import annotations
 
+import sys
 import hashlib
 import os
 import zipfile
@@ -39,7 +40,12 @@ def tool(fn=None, **_kwargs):
 
 def _sources() -> list[Path]:
     root = Path(__file__).parent / "runner"
-    return sorted(p for p in root.glob("*.py"))
+    if getattr(sys, "frozen", False):  # the packaged app ships the sources as data (the spec)
+        root = Path(getattr(sys, "_MEIPASS", "")) / "coworker" / "sandbox" / "runner_src"
+    found = sorted(p for p in root.glob("*.py"))
+    if not found:
+        raise RuntimeError(f"the tool runner's sources are missing from this build ({root})")
+    return found
 
 
 def _toolkit_sources() -> list[Path]:
@@ -47,10 +53,14 @@ def _toolkit_sources() -> list[Path]:
 
     found = []
     for name in _AISUITE_TOOLKITS:
-        spec = importlib.util.find_spec(f"aisuite.toolkits.{name}")
-        if spec is None or not spec.origin or not spec.origin.endswith(".py"):
+        if getattr(sys, "frozen", False):  # the packaged app ships the sources as data (the spec)
+            origin = Path(getattr(sys, "_MEIPASS", "")) / "aisuite" / "toolkits_src" / f"{name}.py"
+        else:
+            spec = importlib.util.find_spec(f"aisuite.toolkits.{name}")
+            origin = Path(spec.origin) if spec is not None and spec.origin else None
+        if origin is None or origin.suffix != ".py" or not origin.is_file():
             raise RuntimeError(f"cannot find the source of aisuite.toolkits.{name} to pack into the tool runner")
-        found.append(Path(spec.origin))
+        found.append(origin)
     return found
 
 

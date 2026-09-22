@@ -31,6 +31,7 @@ from typing import Any, Optional, Sequence
 from .. import credentials as creds
 from .. import netproxy, network_profiles
 from ..bundle import build_runner_zipapp
+from ..launch import read_paths, runner_command
 from ..transport import PipeTransport, Transport
 from . import seatbelt_profile
 
@@ -58,8 +59,6 @@ def preflight() -> None:
         raise SeatbeltUnavailable("The Seatbelt sandbox exists only on macOS.")
     if not os.access(SANDBOX_EXEC, os.X_OK):
         raise SeatbeltUnavailable(f"{SANDBOX_EXEC} is missing on this Mac.")
-    if getattr(sys, "frozen", False):
-        raise SeatbeltUnavailable("The Seatbelt sandbox is not available in the packaged desktop app yet.")
     probe = subprocess.run(
         [SANDBOX_EXEC, "-p", "(version 1)(allow default)", "/usr/bin/true"],
         stdin=subprocess.DEVNULL,
@@ -77,13 +76,6 @@ def clean_environment(base: Optional[dict[str, str]] = None) -> dict[str, str]:
     OpenWorker's own variables (one of them is the server's API token)."""
     source = os.environ if base is None else base
     return {k: v for k, v in source.items() if not k.startswith(_OWN_PREFIXES) and not _SECRET_NAME.search(k)}
-
-
-def _python_read_paths() -> list[str]:
-    """What the Python that runs the runner needs to read: itself and its standard library.
-    In a virtual environment the real interpreter lives elsewhere (`base_prefix`)."""
-    paths = {sys.prefix, sys.base_prefix, os.path.dirname(os.path.realpath(sys.executable))}
-    return sorted(p for p in paths if p)
 
 
 class SeatbeltProvider:
@@ -133,7 +125,7 @@ class SeatbeltProvider:
         return seatbelt_profile.render(
             self.roots,
             runtime_dir=self._dir,
-            read_only=[str(self._runner), *_python_read_paths(), str(toolchain.bin_dir())],
+            read_only=[str(self._runner), *read_paths(), str(toolchain.bin_dir())],
             proxy_port=self._proxy.port if self._proxy is not None else None,
         )
 
@@ -175,7 +167,7 @@ class SeatbeltProvider:
         self._daemon = subprocess.Popen(
             [
                 SANDBOX_EXEC, "-p", self.profile_text(),
-                sys.executable, "-S", str(self._runner),
+                *runner_command(self._runner),
                 "serve", "--socket", self.socket_path, "--cwd", self.cwd, "--exit-with-parent",
             ],  # fmt: skip
             stdin=subprocess.DEVNULL,
@@ -196,7 +188,7 @@ class SeatbeltProvider:
             time.sleep(0.02)
 
     def open_runner(self) -> Transport:
-        argv = [sys.executable, "-S", str(self._runner), "attach", "--socket", self.socket_path]
+        argv = [*runner_command(self._runner), "attach", "--socket", self.socket_path]
         if self._relay_silence is not None:
             argv += ["--silence-seconds", str(self._relay_silence)]
         return PipeTransport(

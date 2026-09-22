@@ -322,3 +322,20 @@ def test_the_provider_setting_selects_the_runner(tmp_path, monkeypatch):
         ws.close()
     with pytest.raises(ValueError):
         open_workspace(cwd=tmp_path, provider="no-such-thing")
+
+
+def test_the_server_binary_can_run_as_the_runner(tmp_path):
+    """`openworker-server sandbox-runner ...` is how the packaged app starts the runner
+    (coworker/sandbox/launch.py): the same daemon, without loading the server."""
+    import subprocess
+    import sys
+
+    from coworker.sandbox import launch
+
+    assert launch.maybe_run_runner(["--port", "1"]) is False
+    with pytest.raises(SystemExit):
+        launch.maybe_run_runner(["sandbox-runner", "--help"])
+    # From source the runner is the zipapp under -S; frozen it is the binary itself.
+    assert launch.runner_command(tmp_path / "r.pyz")[:2] == [sys.executable, "-S"]
+    done = subprocess.run([sys.executable, "-m", "coworker.server.run", "sandbox-runner", "--help"], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and "serve" in done.stdout and "attach" in done.stdout

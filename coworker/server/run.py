@@ -158,6 +158,9 @@ def _warn_if_state_shared() -> None:
 
 
 def main(argv=None) -> None:
+    from ..sandbox.launch import maybe_run_runner
+
+    maybe_run_runner(list(sys.argv[1:] if argv is None else argv))  # `sandbox-runner ...`
     _ensure_ca_bundle()
     cfg = load_config()  # global config supplies defaults
     parser = argparse.ArgumentParser(prog="openworker-server")
