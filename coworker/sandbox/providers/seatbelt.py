@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from .. import credentials as creds
 from .. import netproxy, network_profiles
 from ..bundle import build_runner_zipapp
 from ..transport import PipeTransport, Transport
@@ -97,8 +98,12 @@ class SeatbeltProvider:
         network: bool = True,
         runner_path: Optional[Path] = None,
         relay_silence_seconds: Optional[float] = None,
+        credentials: Sequence[creds.Grant] = (),
     ) -> None:
+        """`credentials`: the grants (credentials.granted) to copy into the sandbox."""
         self.roots = [{"path": seatbelt_profile.real(r["path"]), "writable": bool(r.get("writable"))} for r in roots]
+        self.grants = list(credentials)
+        self.copied: Optional[creds.CopiedCredentials] = None
         self.cwd = seatbelt_profile.real(cwd)
         self.profile = network_profiles.check(profile)
         self.network = network
@@ -119,6 +124,7 @@ class SeatbeltProvider:
             "sandbox": self.sandbox,
             "enforcement": "full",
             "reason": f"macOS sandbox: files limited to the session's folders; network: {network}",
+            "credentials": self.copied.describe() if self.copied is not None else [],
         }
 
     def profile_text(self) -> str:
@@ -133,6 +139,10 @@ class SeatbeltProvider:
 
     def _environment(self) -> dict[str, str]:
         env = clean_environment()
+        if self.copied is not None:
+            env.update(self.copied.env)  # HOME is the sandbox's own; the copies live there
+            if self.copied.path_dirs:
+                env["PATH"] = os.pathsep.join([*self.copied.path_dirs, env.get("PATH", "")])
         tmp = os.path.join(self._dir, "tmp")
         env["TMPDIR"] = tmp + "/"
         for variable, folder in _CACHE_VARIABLES.items():
@@ -144,7 +154,18 @@ class SeatbeltProvider:
     def create(self) -> None:
         preflight()
         os.makedirs(os.path.join(self._dir, "tmp", "cache"), exist_ok=True)
-        self._proxy = netproxy.shared(self.profile) if self.network else None
+        if self.network:
+            hosts = sorted({h for g in self.grants for h in g.hosts})
+            # A session with grants gets its own proxy, because its allow list is its own.
+            self._proxy = netproxy.AllowListProxy(self.profile, extra_hosts=hosts) if hosts else netproxy.shared(self.profile)
+        else:
+            self._proxy = None
+        self.copied = creds.copy_in(
+            self.grants,
+            self._dir,
+            proxy_port=self._proxy.port if self._proxy is not None else None,
+            ssh_proxy_command=creds.mac_ssh_proxy_command(self._proxy.port) if self._proxy is not None else None,
+        )
         log = open(os.path.join(self._dir, "daemon.log"), "wb")
         self._daemon = subprocess.Popen(
             [
@@ -219,4 +240,6 @@ class SeatbeltProvider:
 
     def destroy(self) -> None:
         self._stop_daemon()
+        if self._proxy is not None and self._proxy is not netproxy._proxies.get(self.profile):
+            self._proxy.close()  # this session's own proxy; the shared one stays
         shutil.rmtree(self._dir, ignore_errors=True)

@@ -140,6 +140,12 @@ class RunnerWorkspace(Workspace):
     def executor(self) -> Executor:
         return self._executor
 
+    def context(self) -> str:
+        """What the agent is told about this sandbox each turn (ruling 21)."""
+        from .credentials import context_lines
+
+        return context_lines(getattr(self.provider, "copied", None))
+
     def describe(self) -> dict[str, Any]:
         return {**self.provider.describe(), "runner": {k: self.hello.get(k) for k in ("runner_version", "os", "machine", "instance_id")}}
 
@@ -171,8 +177,11 @@ def open_workspace(
     roots: Optional[list] = None,
     session_id: str = "",
     agent: str = "",
+    credentials: Optional[list] = None,
 ) -> Workspace:
-    """The session's workspace for the configured provider. `direct` unless told otherwise.
+    """The session's workspace for the configured provider. `credentials`: the machine's
+    `sandbox_credentials` setting; the enabled entries are copied into the sandbox
+    (design doc, section 11b). Ignored in `direct` mode, where nothing is hidden anyway. `direct` unless told otherwise.
     `roots`: the session's RootDir list (primary first); without it the workspace folder is
     the only, writable, root. `session_id` and `agent` say who the sandbox is for; they go
     into the registry and onto the sandbox as a label."""
@@ -185,12 +194,15 @@ def open_workspace(
         return RunnerWorkspace(RunnerLocalProvider(cwd=cwd), cwd=cwd)
     listed = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]
     listed = listed or [{"path": str(cwd), "writable": True}]
+    from .credentials import granted
+
+    grants = granted(credentials)
     if name == SEATBELT:
         from .providers.seatbelt import SeatbeltProvider
         from .registry import SandboxRegistry
 
         return RunnerWorkspace(
-            SeatbeltProvider(roots=listed, cwd=str(cwd)),
+            SeatbeltProvider(roots=listed, cwd=str(cwd), credentials=grants),
             cwd=cwd,
             registry=SandboxRegistry(),
             session_id=session_id,
@@ -203,7 +215,7 @@ def open_workspace(
 
         label = "-".join(part for part in (session_id[:24], agent[:24]) if part)
         return RunnerWorkspace(
-            OpenShellProvider(roots=listed, cwd=str(cwd), label=label),
+            OpenShellProvider(roots=listed, cwd=str(cwd), label=label, credentials=grants),
             cwd=cwd,
             registry=SandboxRegistry(),
             session_id=session_id,

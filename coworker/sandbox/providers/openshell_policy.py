@@ -56,11 +56,15 @@ def render(
     profile: str = DEFAULT_PROFILE,
     uid: Optional[int] = None,
     gid: Optional[int] = None,
+    home: Optional[str] = None,
+    extra_hosts: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """`roots`: [{"path": absolute path, "writable": bool}], primary first."""
+    """`roots`: [{"path": absolute path, "writable": bool}], primary first. `home`: the
+    sandbox's private home folder with the copied credentials (section 11b), read-write.
+    `extra_hosts`: "host:port" entries the grants need; `*.example.com` is a wildcard."""
     if profile not in PROFILES:
         raise ValueError(f"unknown network profile {profile!r} (known: {', '.join(sorted(PROFILES))})")
-    read_write = [RUNTIME_DIR, "/dev/null", "/dev/pts", *[str(r["path"]) for r in roots if r.get("writable")]]
+    read_write = [RUNTIME_DIR, "/dev/null", "/dev/pts", *([home] if home else []), *[str(r["path"]) for r in roots if r.get("writable")]]
     read_only = [*_SYSTEM_READ_ONLY, *_IMAGE_TOOLS_READ_ONLY, RUNNER_MOUNT, *[str(r["path"]) for r in roots if not r.get("writable")]]
     policy: dict[str, Any] = {
         "version": 1,
@@ -72,15 +76,24 @@ def render(
         },
         "network_policies": copy.deepcopy(PROFILES[profile]),  # no shared objects: plain YAML, no anchors
     }
+    if extra_hosts:
+        endpoints = []
+        for item in extra_hosts:
+            host, _, port = str(item).rpartition(":")
+            if host and port.isdigit():
+                endpoints.append({"host": host, "port": int(port)})
+        policy["network_policies"]["credentials"] = {"name": "shared-credentials", "endpoints": endpoints, "binaries": [dict(b) for b in _ANY_BINARY]}
     return policy
 
 
-def mounts(roots: Sequence[dict[str, Any]], runner_dir: str) -> dict[str, Any]:
+def mounts(roots: Sequence[dict[str, Any]], runner_dir: str, home: Optional[str] = None) -> dict[str, Any]:
     """Driver config for the Docker driver: every folder at the same absolute path it has on
-    the machine, and the runner's folder read-only."""
+    the machine, the runner's folder read-only, and the sandbox's private home read-write."""
     binds = [
         {"type": "bind", "source": str(r["path"]), "target": str(r["path"]), "read_only": not r.get("writable")}
         for r in roots
     ]
     binds.append({"type": "bind", "source": runner_dir, "target": RUNNER_MOUNT, "read_only": True})
+    if home:
+        binds.append({"type": "bind", "source": home, "target": home, "read_only": False})
     return {"docker": {"mounts": binds}}

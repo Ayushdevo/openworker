@@ -346,6 +346,7 @@ def build_engine(
             roots=root_list or None,
             session_id=session_id or "",
             agent=agent.name,
+            credentials=config.sandbox_credentials,
         )
         if ws is not None
         else None
@@ -645,6 +646,13 @@ def build_engine(
             ctx = roots_context()
             if ctx:
                 parts.append(ctx)
+        # Credentials the user shared with the sandbox (section 11b): fixed for the
+        # session, so this cannot move on its own either.
+        sandbox_ctx = getattr(sandbox_workspace, "context", None)
+        if sandbox_ctx is not None:
+            text = sandbox_ctx()
+            if text:
+                parts.append(text)
         # Live skill menu (SKILLS-SPEC §4.1): recomputed every turn like the roots list, so
         # a skill installed/enabled/disabled mid-session applies from the NEXT MESSAGE —
         # no new session, no lost context.

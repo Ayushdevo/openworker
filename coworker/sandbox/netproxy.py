@@ -15,7 +15,7 @@ import select
 import socket
 import threading
 from collections import deque
-from typing import Optional
+from typing import Optional, Sequence
 
 from . import network_profiles
 
@@ -25,9 +25,16 @@ _MAX_HEAD = 16 * 1024
 
 
 class AllowListProxy:
-    def __init__(self, profile: str = network_profiles.DEFAULT_PROFILE) -> None:
+    def __init__(self, profile: str = network_profiles.DEFAULT_PROFILE, extra_hosts: Sequence[str] = ()) -> None:
+        """`extra_hosts`: "host:port" entries beyond the profile (credential grants, section
+        11b); `*.example.com` matches any subdomain. A port of 22 is an SSH tunnel."""
         self.profile = network_profiles.check(profile)
         self._hosts = {h.lower() for h in network_profiles.hosts(profile)}
+        self._extra: set[tuple[str, int]] = set()
+        for item in extra_hosts:
+            host, _, port = str(item).rpartition(":")
+            if host and port.isdigit():
+                self._extra.add((host.lower().rstrip("."), int(port)))
         self.denied: deque[str] = deque(maxlen=50)  # recent refusals, newest last
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -42,7 +49,17 @@ class AllowListProxy:
         return f"http://127.0.0.1:{self.port}"
 
     def allows(self, host: str, port: int) -> bool:
-        return port == 443 and host.lower().rstrip(".") in self._hosts
+        host = host.lower().rstrip(".")
+        if port == 443 and host in self._hosts:
+            return True
+        for allowed, allowed_port in self._extra:
+            if allowed_port != port:
+                continue
+            if allowed.startswith("*.") and host.endswith(allowed[1:]) and host != allowed[2:]:
+                return True
+            if host == allowed:
+                return True
+        return False
 
     def close(self) -> None:
         self._closed = True
@@ -75,7 +92,7 @@ class AllowListProxy:
                 return self._refuse(client, 400, "not an HTTP request")
             method, target = parts[0].upper(), parts[1]
             if method != "CONNECT":
-                return self._refuse(client, 403, f"only HTTPS is allowed out of this sandbox (got {method} {target[:120]})", target)
+                return self._refuse(client, 403, f"only tunnelled connections are allowed out of this sandbox (got {method} {target[:120]})", target)
             host, _, port_text = target.rpartition(":")
             host = host.strip("[]")
             if not host or not port_text.isdigit():
@@ -91,7 +108,9 @@ class AllowListProxy:
                 upstream = socket.create_connection((host, int(port_text)), timeout=_CONNECT_SECONDS)
             except OSError as exc:
                 return self._refuse(client, 502, f"could not reach {host}: {exc}")
-            client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            # HTTP/1.0 on purpose: BSD nc (the ssh ProxyCommand on macOS) accepts only that
+            # line for a tunnel, and every HTTP client accepts it too.
+            client.sendall(b"HTTP/1.0 200 Connection established\r\n\r\n")
             rest = head.split(b"\r\n\r\n", 1)[1]
             if rest:
                 upstream.sendall(rest)

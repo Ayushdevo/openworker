@@ -119,6 +119,11 @@ class Config:
     # only: a repository's own config must never be able to switch the sandbox off.
     # Environment override: OPENWORKER_SANDBOX_PROVIDER.
     sandbox_provider: Optional[str] = None
+    # Credential files the user chose to share with sandboxes (design doc, section 11b):
+    # `[[sandbox_credentials]]` tables with name, path, hosts, enabled. Machine-level only,
+    # for the same reason as the provider. The shipped entries and their defaults are in
+    # coworker/sandbox/credentials.py; an entry here edits or adds by name.
+    sandbox_credentials: list[dict[str, Any]] = field(default_factory=list)
 
 
 _FIELDS = {
@@ -129,6 +134,7 @@ _FIELDS = {
     "reasoning_effort",
     "tool_result_max_bytes",
     "sandbox_provider",
+    "sandbox_credentials",
     "compaction_cap_tokens",
     "compaction_summary_max_tokens",
     "allowed_commands",
@@ -153,6 +159,7 @@ _FIELDS = {
 # only (a repo must not be able to widen the agent's command or network reach).
 _GLOBAL_ONLY_FIELDS = {
     "sandbox_provider",
+    "sandbox_credentials",
     "allowed_commands",
     "auto_allow",
     "allowed_domains",

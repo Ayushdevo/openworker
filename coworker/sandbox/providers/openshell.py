@@ -35,6 +35,7 @@ import yaml
 
 from ..bundle import build_runner_zipapp
 from ..transport import Transport
+from .. import credentials as creds
 from . import openshell_policy as policy
 from . import openshell_wire as wire
 
@@ -97,6 +98,7 @@ class OpenShellProvider:
         profile: str = policy.DEFAULT_PROFILE,
         image: Optional[str] = None,
         label: str = "",
+        credentials: Sequence[creds.Grant] = (),
     ) -> None:
         """`roots`: [{"path", "writable"}], primary first. `label`: who this sandbox is for
         (session and agent), stored on the sandbox so leftovers can be found."""
@@ -112,6 +114,8 @@ class OpenShellProvider:
         self.sandbox_id: Optional[str] = None
         self._runner = build_runner_zipapp()
         self._tmp = tempfile.mkdtemp(prefix="ow-openshell-")
+        self.grants = list(credentials)
+        self.copied: Optional[creds.CopiedCredentials] = None
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -120,6 +124,7 @@ class OpenShellProvider:
             "reason": f"OpenShell {PINNED_VERSION}: Landlock and seccomp on every process, network profile '{self.profile}', no keys inside",
             "sandbox": self.sandbox_name,
             "image": self.image,
+            "credentials": self.copied.describe() if self.copied is not None else [],
         }
 
     # -- lifecycle --------------------------------------------------------------------
@@ -129,15 +134,22 @@ class OpenShellProvider:
             if not os.path.isdir(root["path"]):
                 raise RuntimeError(f"folder does not exist on this machine: {root['path']}")
         uid, gid = (os.getuid(), os.getgid()) if sys.platform.startswith("linux") else (None, None)
+        # The sandbox's private home with the copied credentials (section 11b), mounted at
+        # the same path it has on the machine, read-write. With no grants it holds only
+        # git's settings, and HOME stays the runtime folder.
+        self.copied = creds.copy_in(self.grants, self._tmp) if self.grants else None
+        home = self.copied.home if self.copied is not None else None
+        extra_hosts = self.copied.hosts if self.copied is not None else []
         policy_file = Path(self._tmp) / "policy.yaml"
-        policy_file.write_text(yaml.safe_dump(policy.render(self.roots, profile=self.profile, uid=uid, gid=gid), sort_keys=False), encoding="utf-8")
-        driver_config = json.dumps(policy.mounts(self.roots, str(self._runner.parent)))
+        policy_file.write_text(yaml.safe_dump(policy.render(self.roots, profile=self.profile, uid=uid, gid=gid, home=home, extra_hosts=extra_hosts), sort_keys=False), encoding="utf-8")
+        driver_config = json.dumps(policy.mounts(self.roots, str(self._runner.parent), home))
         command = [policy.PYTHON, "-S", f"{policy.RUNNER_MOUNT}/{self._runner.name}", "serve", "--socket", _SOCKET, "--cwd", self.cwd]
+        env = {"HOME": policy.RUNTIME_DIR, **(self.copied.env if self.copied is not None else {})}
         args = [
             "sandbox", "create", "--name", self.sandbox_name, "--from", self.image,
             "--no-tty", "--detach", "--no-auto-providers",
             "--policy", str(policy_file), "--driver-config-json", driver_config,
-            "--label", f"{LABEL}=1", "--env", f"HOME={policy.RUNTIME_DIR}",
+            "--label", f"{LABEL}=1", *[x for k, v in env.items() for x in ("--env", f"{k}={v}")],
         ]  # fmt: skip
         if self.label:
             args += ["--label", f"{LABEL}-owner={self.label}"]

@@ -136,7 +136,7 @@ def test_proxy_tunnels_a_listed_host(monkeypatch):
         with real_connect(("127.0.0.1", proxy.port), timeout=5) as s:
             s.sendall(b"CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n")
             s.settimeout(5)
-            assert s.recv(4096).startswith(b"HTTP/1.1 200 ")
+            assert s.recv(4096).startswith(b"HTTP/1.0 200 ")
             s.sendall(b"ping")
             assert s.recv(16) == b"pong"
         assert wanted == [("github.com", 443)]
