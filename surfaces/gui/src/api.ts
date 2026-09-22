@@ -328,7 +328,7 @@ export interface MessageSource {
   text: string; // the RAW message (what the card shows)
   // Board wakes only (connector === "board"): the digest as structured rows, so
   // the BoardWakeCard renders collapsed summaries instead of re-parsing prose.
-  board?: { rows: BoardWakeRow[] };
+  board?: { rows: BoardWakeRow[]; check_in?: boolean };
 }
 
 // One digest event on a board wake. `note` is a UI-clamped excerpt of a hand-off
@@ -339,6 +339,9 @@ export interface BoardWakeRow {
   title?: string;
   actor?: string;
   to?: string;
+  from?: string;
+  assignee?: string;
+  refs?: string[];
   note?: string;
   // `waiting` only: a worker is waiting on the lead's decision for this tool call.
   tool?: string;
@@ -412,6 +415,10 @@ export interface BoardItem {
   links: { kind: string; item: number }[];
   // Blocked rows only: the latest blocker comment, clamped ("need tfvars…").
   blocker?: string;
+  waiting?: { prompt_id: string; tool: string; preview: string };
+  status?: string;
+  status_ts?: string;
+  created_ts?: string;
 }
 
 export interface Board {
@@ -429,6 +436,14 @@ export interface JournalCase {
 export async function getBoard(sessionId: string): Promise<Board> {
   const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/board`);
   return res.json();
+}
+
+export async function getTeamSummary(sessionId: string, teamId: string): Promise<import("./teamView").TeamSummary> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/teams/${encodeURIComponent(teamId)}/summary`);
+  if (!res.ok) throw new Error("Team summary unavailable");
+  const data = await res.json();
+  if (!Array.isArray(data.items) || !Array.isArray(data.workers) || !data.lead || !data.totals || !data.counts) throw new Error("Team summary unavailable");
+  return data;
 }
 
 // One event in an item's merged timeline (the detail pane renders the item's
@@ -944,7 +959,7 @@ export async function cloudLogout(): Promise<{ ok: boolean }> {
 
 export async function connectManaged(
   name: string,
-  options?: { access?: "read" | "write" },
+  options?: { access?: "read" | "write"; flow?: "install" },
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(
     `${httpBase()}/v1/connectors/${encodeURIComponent(name)}/connect-managed`,
@@ -952,10 +967,11 @@ export async function connectManaged(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // `access` names a broker-defined consent tier (hubspot read | write).
-      // GitHub needs no flow choice: the broker is authorize-first — one connect
-      // links an existing App installation or redirects on to the install page.
+      // Normal connect links existing grants; explicit Add installation opens
+      // GitHub's account/repository consent picker even when grants already exist.
       body: JSON.stringify({
         ...(options?.access ? { access: options.access } : {}),
+        ...(name === "github" && options?.flow ? { flow: options.flow } : {}),
       }),
     },
   );
@@ -1340,6 +1356,7 @@ export interface TeamMemberDecision {
   persona: string;
   name?: string;
   connectors: string[];
+  approval_guidance?: string;
   // The human's FINAL model choice for this worker — sent only when the gate offered
   // a model picker (the server supplied `runnable_models`).
   model?: string;
@@ -1795,6 +1812,7 @@ export async function setSessionSkill(
 // -- Inbox + Unattended -------------------------------------------------------
 export interface InboxItem {
   id: string;
+  tool_call_id?: string;
   session_id: string;
   kind: "approval" | "question" | "notification" | "directory" | "plan" | "tool" | "connector";
   title: string;

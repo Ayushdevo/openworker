@@ -8,6 +8,7 @@ export type IconName =
   | "sidebarRight"
   | "signOut"
   | "chat"
+  | "workList"
   | "diamond"
   | "book"
   | "search"
@@ -25,6 +26,8 @@ export type IconName =
   | "pencil"
   | "branch"
   | "arrowLeft"
+  | "arrowRight"
+  | "team"
   | "copy"
   | "refresh"
   | "panelClose"
@@ -113,6 +116,10 @@ export function Icon({
           <path d="M15 4.5v15" />
         </svg>
       );
+    case "team":
+      return <svg {...s}><circle cx="9" cy="7" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 13a5 5 0 0 1 3 5v3" /></svg>;
+    case "arrowRight":
+      return <svg {...s}><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
     case "user":
       return (
         <svg {...s}>
@@ -275,6 +282,8 @@ export function Icon({
           <path d="M5 5.5h14c.8 0 1.5.7 1.5 1.5v7c0 .8-.7 1.5-1.5 1.5H9.5L5.5 19v-3H5c-.8 0-1.5-.7-1.5-1.5V7c0-.8.7-1.5 1.5-1.5z" />
         </svg>
       );
+    case "workList":
+      return <svg {...s}><rect x="3" y="4" width="4" height="4" rx="1" /><rect x="3" y="10" width="4" height="4" rx="1" /><rect x="3" y="16" width="4" height="4" rx="1" /><path d="M11 6h10M11 12h10M11 18h10" /></svg>;
     case "wrench":
       return (
         <svg {...s}>

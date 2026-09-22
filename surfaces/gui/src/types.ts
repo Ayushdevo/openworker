@@ -147,6 +147,7 @@ export type Item =
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
+  | { kind: "teamcreated"; teamId: string; workers: { actor: string; persona: string }[]; ts?: number }
   | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
@@ -160,6 +161,7 @@ export type Item =
   | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string }
   | {
       kind: "approval";
+      toolCallId?: string;
       name: string;
       args: any;
       reason: string;
@@ -178,6 +180,7 @@ export type Item =
       // The Auto-Approve reviewer answered `unsure` and raised this card: its one-line
       // reason, rendered quietly so "why am I being asked?" is answered in place.
       reviewerUnsure?: string;
+      escalation?: import("./components/ApprovalEscalation").Escalation;
       // Server-classified: this shell command only reads locally, so the card may offer
       // the session-wide "Allow read-only commands" grant.
       readonlyOk?: boolean;
@@ -216,15 +219,23 @@ export type Item =
   | {
       // The staffing gate (agent teams): a lead proposes its worker roster.
       kind: "teamreq";
+      title?: string;
+      summary?: string;
+      groups?: import("./proposals").ProposalGroup[];
+      planned_items?: { id: number; title: string; final_acceptance?: { id: number; title: string; owner: "lead" | "assigned_worker" } }[];
+      toolCallId?: string;
       // connectors = the LEAD'S SUGGESTION for this worker (arrives ticked on the card);
       // connector_reasons = why, per suggested connector.
       members: {
         persona: string;
+        group?: string;
+        item_ids?: number[];
         name?: string;
         model?: string;
         reason?: string;
         connectors?: string[];
         connector_reasons?: Record<string, string>;
+        approval_guidance?: string;
         // The model this worker WILL run on if the human changes nothing on the card.
         resolved_model?: string;
         // Set when none of the persona's recommended models can run on this machine.
@@ -260,7 +271,15 @@ export type Item =
   | {
       // The decomposition gate: a lead proposes work items; approval creates them.
       kind: "itemsreq";
-      items: { title: string; criteria: string; description?: string }[];
+      title?: string;
+      summary?: string;
+      targets?: string[];
+      external_actions?: import("./proposals").ExternalActions;
+      activities?: import("./proposals").ProposalGroup[];
+      workstreams?: import("./proposals").ProposalGroup[];
+      final_acceptance?: { item_key: string; owner: "lead" | "assigned_worker" };
+      toolCallId?: string;
+      items: import("./proposals").ProposalTask[];
       note?: string;
       resolved?: "approved" | "rejected";
     }

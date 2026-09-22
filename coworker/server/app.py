@@ -289,6 +289,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/inbox")
     def inbox(session_id: str = "", state: str = "") -> dict[str, Any]:
         from dataclasses import asdict
+        manager.reconcile_obsolete_prompts(session_id)
 
         # The cross-session Inbox list shows only Unattended (inbox-visibility) items; a per-session
         # query returns inline ones too, so the answer-in-context card sees parked attended prompts.
@@ -405,6 +406,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/inbox/reconcile")
     def reconcile_inbox(session_id: str) -> dict[str, Any]:
         # Called when a session resumes attended control (surface pending + recap inline).
+        manager.reconcile_obsolete_prompts(session_id)
         return manager.inbox.reconcile_on_resume(session_id)
 
     @app.get("/v1/inbox/routing")
@@ -820,6 +822,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         return Response(
             content=data,
             media_type=mime,
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
     @app.post("/v1/sessions/{session_id}/board/comment")
@@ -838,6 +841,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             str(body.get("to", "")),
             comment=str(body.get("comment", "")),
         )
+
+    @app.get("/v1/teams/{team_id}/summary")
+    def team_summary(team_id: str):
+        result = manager.team_summary(team_id)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
 
     @app.get("/v1/teams/{team_id}/chat")
     def team_chat(team_id: str) -> dict[str, Any]:
@@ -911,6 +919,17 @@ def create_app(manager: SessionManager) -> FastAPI:
             lambda actor: manager.team_store.get_item(space, int(id), actor=actor),
         )
 
+    @app.get("/v1/board/comments")
+    def board_comments(request: Request, space: str, id: int, after_seq: int = 0, limit: int = 20):
+        return _board(request, lambda actor: manager.team_store.comment_page(
+            space, id, actor=actor, after_seq=after_seq, limit=limit))
+
+    @app.get("/v1/board/comment")
+    def board_comment_text(request: Request, space: str, id: int, seq: int,
+                           offset: int = 0, max_chars: int = 12000):
+        return _board(request, lambda actor: manager.team_store.comment_text(
+            space, id, actor=actor, seq=seq, offset=offset, max_chars=max_chars))
+
     @app.post("/v1/board/items")
     def board_create_item(request: Request, body: dict):
         body = body or {}
@@ -953,16 +972,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/board/items/comment")
     def board_comment_item(request: Request, body: dict):
         body = body or {}
-        return _board(
-            request,
-            lambda actor: manager.team_store.comment(
+        def run(actor):
+            result = manager.team_store.comment(
                 str(body.get("space", "")),
                 actor,
                 int(body.get("id", 0)),
                 str(body.get("body", "")),
                 refs=[str(ref) for ref in body.get("refs") or []],
-            ),
-        )
+                needs_attention=body.get("needs_attention", False),
+            )
+            manager.kick_team_tick()
+            return result
+        return _board(request, run)
 
     @app.post("/v1/board/items/assign")
     def board_assign_item(request: Request, body: dict):
@@ -979,6 +1000,12 @@ def create_app(manager: SessionManager) -> FastAPI:
             return item
 
         return _board(request, run)
+
+    @app.post("/v1/board/items/status")
+    def board_set_status(request: Request, body: dict):
+        return _board(request, lambda actor: manager.team_store.set_status(
+            str(body.get("space", "")), actor, body.get("id"), body.get("text")
+        ))  # Display-only: deliberately no team tick.
 
     @app.post("/v1/board/items/claim")
     def board_claim_item(request: Request, body: dict):
@@ -1012,6 +1039,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         body = body or {}
 
         def run(actor):
+            manager.team_store.require_attachment_write(
+                str(body.get("space", "")), actor, int(body.get("id", 0))
+            )
             raw = str(body.get("data_b64", ""))
             # Cheap pre-decode bound: base64 is ~4/3 of the payload, so anything
             # multiples over the cap is refused before allocating the decode.
@@ -1050,6 +1080,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return Response(
                 content=path.read_bytes(),
                 media_type=manager.attachment_store.mime_for(name),
+                headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
             )
 
         return _board(request, run)
@@ -2537,6 +2568,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             if item.state == "pending":
                 manager.persist_session(session_id)
+                manager.note_worker_waiting(session_id, "ask_user", prompt_id=item.id, preview=item.title)
                 if item.visibility == VIS_INBOX:
                     await _mirror(item)
                 else:
@@ -2861,20 +2893,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                 events = (
                     engine.retry()
                     if retry
-                    else engine.run(content, display=display)
+                    else engine.run(content, display=display,
+                                    activity=manager.prepare_activity(session_id, "user activity"))
                 )
                 async for event in events:
                     data = event.data
-                    if event.type is EventType.TEAM_PROPOSED:
-                        # Spec §11.6: the staffing card offers, per worker, the connectors
-                        # it COULD be given (declared ceiling ∩ connected) — computed here,
-                        # where the manager is at hand; the engine only knows the roster.
-                        data = {**data, **manager.team_card_extras(session_id, data.get("members") or [])}
-                    elif event.type is EventType.PERMISSION_REQUIRED and data.get("name") == "decide_worker_call":
-                        # The card shows the worker's call the lead is deciding, not its id.
-                        worker_call = manager.worker_call_for(data.get("arguments") or {})
-                        if worker_call:
-                            data = {**data, "worker_call": worker_call}
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(
@@ -3021,7 +3044,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     else:
                         engine.approve_action_once(name, arguments or {})
                 elif kind == "interrupt":
-                    engine.request_interrupt()
+                    manager.stop_session(session_id)
                 elif kind == "retry":
                     # Re-run after a provider error (engine guards on the error-notice
                     # tail, so a stray frame is a no-op that still ends with turn_done).
@@ -3074,6 +3097,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                             # records it, Recents doesn't reorder. The next real turn's
                             # checkpoint save bumps recency as usual.
                             manager.save(session_id, engine, touch=False)
+                            manager.sync_cached_reviewers()
                             await manager.broadcast_session(
                                 session_id,
                                 {"type": "mode_notice", "data": notice_data},

@@ -6,6 +6,15 @@ import { statePayload, type CardId } from "../src/gallery/states";
 // The app-wide /ws/events socket each page opened (UX-026 toast et al.) — specs
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
+const sessionSockets = new WeakMap<Page, { send: (data: string) => void }>();
+
+/** Simulate a session event caused by another viewer/API client. */
+export async function sendSessionEvent(page: Page, obj: unknown): Promise<void> {
+  for (let i = 0; i < 50 && !sessionSockets.get(page); i++) await page.waitForTimeout(100);
+  const ws = sessionSockets.get(page);
+  if (!ws) throw new Error("the app never opened its session socket");
+  ws.send(JSON.stringify(obj));
+}
 
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
@@ -681,6 +690,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
+    sessionSockets.set(page, ws);
     const send = (type: string, data: Record<string, unknown> = {}) =>
       ws.send(JSON.stringify({ type, data }));
     const sendState = (type: string, card: CardId, id: string) => send(type, statePayload(card, id));
@@ -745,8 +755,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
           send("turn_done");
           return;
         }
-        if (/propose the split/i.test(msg.text)) {
-          sendState("items_proposed", "work-items", "statements-split");
+        if (/propose the split|propose security split/i.test(msg.text)) {
+          sendState("items_proposed", "work-items", /security/.test(msg.text) ? "security-plan" : "statements-split");
           return; // suspended on the items decision
         }
         // Agent teams (OPE-97): the staffing gate — the lead proposes a roster and
@@ -1052,6 +1062,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         if (msg.mode === "auto-approve" && !anyWs.__modeNoticeShown) {
           anyWs.__modeNoticeShown = true;
           send("mode_notice", {
+            mode: msg.mode,
             title: "Auto-approve is on.",
             text:
               "Auto-approve uses a model to let routine actions through without asking; " +
@@ -1066,7 +1077,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
             "bypass-approvals": "Bypass approvals",
             "auto-approve": "Auto-approve",
           };
-          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.` });
+          send("mode_notice", { text: `${labels[msg.mode] || msg.mode} is on.`, mode: msg.mode });
         }
       } else if (msg.type === "set_model") {
         // Mid-session switch: the server applies it and broadcasts the persisted marker.

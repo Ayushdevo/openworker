@@ -247,7 +247,17 @@ def configured_opening(event, thread_target: str, folder: str) -> str:
     if body:
         lines.append(f"Description:\n{body}")
     if folder:
-        lines.append(f"Your session folder is a checkout of the code under review: {folder}")
+        lines.append(
+            f"Your session directory is {folder}. No repository or worktree was created. "
+            "If local code is needed, use github_clone in this directory; otherwise work through the connector."
+        )
+    is_pr = bool(frame.get("is_pr")) or kind in ("pr_open", "pr_merge")
+    if is_pr and number.isdigit():
+        lines.append(
+            f"PR source: refs/pull/{number}/head. For review, clone with this ref, not the default branch. "
+            "Record the returned full commit SHA; this is the fetched revision, not necessarily the event-time revision. "
+            "For post-merge work, inspect the PR's merge commit and target branch through GitHub first."
+        )
     src = getattr(event, "source", None)
     if src is not None:
         lines.append(origin_block(src, frame={**frame, "kind": kind}))
@@ -379,9 +389,13 @@ class SessionManager:
         # board; the log carries only `attachment://` refs.
         self.attachment_store = AttachmentStore(base / "attachments")
         self._team_inflight: set[str] = set()
+        self._team_batch_deadlines: dict[str, float] = {}
+        self._team_batch_handles: dict[str, Any] = {}
+        self._activity_acknowledged: set[str] = set()
         # Lead-session last-turn timestamps for the check-in backstop (monotonic-ish
         # wall clock; restart resets the clock rather than firing a wake storm).
         self._team_last_alive: dict[str, float] = {}
+        self._team_watchdog_alerted: dict[str, tuple] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Personas: registry + lifecycle state under this manager's data dir. Installed as the
         # process singleton so agents.get_agent resolves persona ids (incl. third-party) here.
@@ -573,6 +587,11 @@ class SessionManager:
     def _provision_scratch(self, session_id: str) -> str:
         """Create (idempotently) and return this conversation's scratch directory."""
         d = self.scratch_base() / session_id
+        record = self.session_store.load(session_id)
+        team = (record.team if record else {}) or {}
+        lead = str(team.get("lead_session") or "")
+        if team.get("role") == "worker" and self._SESSION_ID_RE.fullmatch(lead) and lead not in {".", "..", session_id}:
+            d = self.scratch_base() / lead / "workers" / session_id
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
 
@@ -687,6 +706,8 @@ class SessionManager:
         connector_requester: Optional[Any] = None,
     ) -> Optional[TurnEngine]:
         engine = self._engines.get(session_id)
+        self.reconcile_obsolete_prompts(session_id)
+        self.reconcile_activity_receipts(session_id)
         if engine is not None:
             self.sync_worker_mode(session_id, engine)
             if approver is not None:
@@ -761,6 +782,17 @@ class SessionManager:
             else:
                 # A session id we won't put in a filesystem path: primary root only.
                 roots = [{"path": ws, "writable": True, "label": "workspace"}, *extra]
+            team = (record.team if record else {}) or {}
+            if team.get("role") == "worker":
+                lead = self.session_store.load(str(team.get("lead_session") or ""))
+                if lead is not None:
+                    # Shared team filesystem, with a worker-owned directory for worktrees.
+                    for path, label in (
+                        (self._provision_scratch(lead.session_id), "team scratch"),
+                        (self._provision_scratch(session_id), "worker scratch"),
+                    ):
+                        if not any(Path(r["path"]).resolve() == Path(path).resolve() for r in roots):
+                            roots.append({"path": path, "writable": True, "label": label})
         engine = build_engine(
             agent=ag,
             workspace=ws,
@@ -831,6 +863,9 @@ class SessionManager:
             auto_approve=self.auto_approve(),
             auto_approve_shadow=self.auto_approve_shadow(),
         )
+        engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
+        engine.reviewer_context = lambda: self.approval_context(session_id)
+        engine.reviewer_owner_history = lambda: self.approval_owner_history(session_id, engine)
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
@@ -1076,6 +1111,7 @@ class SessionManager:
         lead hears about it on the board. Read at every engine use, never copied."""
         lead_mode = self.lead_mode_for(session_id)
         if lead_mode is None:
+            self.sync_reviewer(engine)
             # Not a worker: a configuration-spawned auto-approve session still counts as
             # attended for the reviewer (§11.5) — unless a live client already decides.
             if engine.is_attended is None and self.reviewer_opted(session_id):
@@ -1083,11 +1119,39 @@ class SessionManager:
             return
         mode = self._mode_value(lead_mode)
         if mode is None:
+            self.sync_reviewer(engine)
             return
         if mode in (Mode.DISCUSS, Mode.PLAN):
             mode = Mode.INTERACTIVE  # read-only leads still let their workers work, with approval
         engine.permissions.mode = mode
+        self.sync_reviewer(engine)
         engine.is_attended = lambda: self._mode_value(self.lead_mode_for(session_id) or "") is Mode.AUTO_APPROVE
+
+    def sync_reviewer(self, engine: TurnEngine) -> None:
+        """Hot-apply feature availability without rebuilding a running engine.
+
+        Does not resolve parked prompts or reset the per-turn denial guard.
+        """
+        live, shadow = self.auto_approve(), self.auto_approve_shadow()
+        key = (live, shadow, engine.permissions.mode)
+        if engine.reviewer_settings_key != key:
+            engine.reviewer_settings_epoch += 1
+            engine.reviewer_settings_key = key
+            engine._reviewer_verdicts.clear()
+        engine.reviewer_enabled = live
+        engine.reviewer_shadow = shadow
+        if not live and not shadow:
+            engine.reviewer = None
+        elif engine.reviewer is None:
+            from ..reviewer import Reviewer
+            engine.reviewer = Reviewer(
+                provider=engine.provider, model=engine.model,
+                known_world=(engine.session_facts.world.render() if engine.session_facts else "") + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(getattr(engine, "runtime_facts", {})),
+            )
+
+    def sync_cached_reviewers(self) -> None:
+        for sid, engine in list(self._engines.items()):
+            self.sync_worker_mode(sid, engine)
 
     def decide_worker_call(self, lead_session_id: str, worker: str, call_id: str, decision: str, note: str = "") -> dict[str, Any]:
         """The lead's `decide_worker_call` (spec §11.6): resolve one of ITS workers'
@@ -1176,10 +1240,13 @@ class SessionManager:
         team, worker = found
         item_id = None
         try:
-            for it in self.team_store.list_items(team.space, self._user_actor()):
-                if it.get("assignee") == worker.actor and it.get("state") == "in_progress":
-                    item_id = it.get("id")
-                    break
+            candidates = [
+                it for it in self.team_store.list_items(team.space, self._user_actor())
+                if it.get("assignee") == worker.actor and it.get("state") == "in_progress"
+            ]
+            # A session is not a task identity. Never pick the first candidate.
+            if len(candidates) == 1:
+                item_id = candidates[0]["id"]
         except Exception:  # noqa: BLE001
             item_id = None
         try:
@@ -1412,6 +1479,7 @@ class SessionManager:
             ):  # durable resume re-raised an already-answered prompt
                 return answer_result(item.questions, item.resolution)
             self.persist_session(session_id)  # the pending tool call is now on disk
+            self.note_worker_waiting(session_id, "ask_user", prompt_id=item.id, preview=item.title)
             await self.mirror_inbox_item(item)
             answer = await self.inbox.wait(item.id)
             return answer_result(item.questions, answer)
@@ -1516,6 +1584,12 @@ class SessionManager:
         the item takes the queue's default like every other background prompt."""
 
         async def approve(args, tool_call_id=None):
+            from ..teams.proposals import validate_team_proposal
+            try:
+                args = validate_team_proposal(args)
+                self.team_planned_items(session_id, args["members"])
+            except (ValueError, TeamsBoardError) as error:
+                return {"approved": False, "error": str(error)}
             members = [dict(m) for m in (args.get("members") or []) if isinstance(m, dict)]
             # The lead's connector suggestions (worker-connector-grants spec §2-4): inside a
             # worker's default set on its own judgment; outside it ONLY on the human's words,
@@ -1559,6 +1633,7 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
                 data={
+                    "title": args["title"], "summary": args["summary"], "groups": args["groups"],
                     "gate": "team",
                     "enable_chat": bool(args.get("enable_chat", False)),
                     "note": str(args.get("note") or ""),
@@ -1581,27 +1656,45 @@ class SessionManager:
             merged = []
             for i, m in enumerate(members):
                 d = decided[i] if i < len(decided) and isinstance(decided[i], dict) else {}
+                guidance = d.get("approval_guidance", "")
+                if not isinstance(guidance, str) or len(guidance) > 2400:
+                    return {"approved": False, "error": "approval_guidance must be text of at most 2400 characters"}
                 merged.append(
                     {
                         **{k: v for k, v in m.items() if k != "connectors"},
+                        "name": str(d.get("name", m.get("name", ""))).strip(),
                         "connectors": list(d.get("connectors") or []),
                         "model_by_human": str(d.get("model") or "").strip(),
+                        # Missing human decision means no guidance, never implicit consent
+                        # to the lead's proposal. Preserve edited text exactly.
+                        "approval_guidance": guidance,
                     }
                 )
             resolved = self.inbox.get(item.id)
+            try:
+                self.team_planned_items(session_id, merged)
+            except (ValueError, TeamsBoardError) as error:
+                return {"approved": False, "error": str(error)}
             return self.create_team(
                 session_id, merged, enable_chat=enable_chat,
                 approved_by=str(getattr(resolved, "resolved_by", "") or ""),
             )
 
+        # The engine checks board references before broadcasting the live card.
+        approve.validate = lambda args: self.team_planned_items(session_id, args["members"])
         return approve
 
     def inbox_items_approver(self, session_id: str, agent: str, *, visibility=None):
         """The decomposition gate for any turn (see inbox_team_approver)."""
 
         async def approve(args, tool_call_id=None):
+            from ..teams.proposals import validate_work_proposal
+            try:
+                args = validate_work_proposal(args)
+            except ValueError as error:
+                return {"approved": False, "error": str(error)}
             items = [i for i in (args.get("items") or []) if isinstance(i, dict)]
-            body = "\n".join(f"- {i.get('title', '?')} — Done when: {i.get('criteria', '?')}" for i in items)
+            body = "\n".join(f"- {i.get('title', '?')} — Acceptance criteria: {i.get('criteria', '?')}" for i in items)
             item = self.inbox.add_plan(
                 session_id,
                 "Approve the proposed work items?",
@@ -1609,7 +1702,7 @@ class SessionManager:
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
                 # Same fields as the inline `items_proposed` event, note included.
-                data={"gate": "items", "items": items, "note": str(args.get("note") or "")},
+                data={"gate": "items", **args},
                 **({"visibility": visibility()} if visibility else {}),
             )
             if item.state == "pending":
@@ -1619,7 +1712,7 @@ class SessionManager:
             resp = _parse_inbox_json(await self.inbox.wait(item.id))
             if not resp.get("approved"):
                 return {"approved": False, "feedback": resp.get("feedback") or "the user declined the split"}
-            return self.board_create_items(session_id, items)
+            return self.board_create_items(session_id, items, proposal=args)
 
         return approve
 
@@ -1691,17 +1784,54 @@ class SessionManager:
         if engine is not None:
             self.save(session_id, engine)
 
+    def reconcile_obsolete_prompts(self, session_id: str = "") -> int:
+        """Retire only tool-bound prompts whose call already has a result.
+
+        A repaired interrupted call has a result stub too. A genuinely pending
+        call has no result and remains available for durable resume.
+        """
+        pending = self.inbox.pending(session_id or None)
+        answered_by_session = {}
+        retired = 0
+        for item in pending:
+            if not item.tool_call_id:
+                continue
+            if item.session_id not in answered_by_session:
+                engine = self._engines.get(item.session_id)
+                record = self.session_store.load(item.session_id) if engine is None else None
+                messages = engine.messages if engine is not None else (record.messages if record else [])
+                answered_by_session[item.session_id] = {
+                    m.get("tool_call_id") for m in messages if m.get("role") == "tool"
+                }
+            if item.tool_call_id in answered_by_session[item.session_id]:
+                if self.inbox.resolve(item.id, "interrupted", by="system:obsolete-prompt"):
+                    retired += 1
+        return retired
+
     async def resolve_inbox(self, item_id: str, resolution: str, by: str = "") -> bool:
         """Resolve an Inbox item from any surface (REST / Slack button / channel reply). If the
         asking agent is still suspended live, that await handles it. Otherwise the process restarted
         (or the engine was evicted) while blocked → durably resume: rebuild the engine from the
         saved thread and continue the turn. `by` = the deciding person when known."""
         item = self.inbox.get(item_id)
+        if item is not None:
+            self.reconcile_obsolete_prompts(item.session_id)
+        pending_before = {p.id: p for p in self.inbox.pending()}
         ok = self.inbox.resolve(item_id, resolution, by=by)
         if not ok or item is None:
             return ok
-        if not self.is_running(item.session_id):
-            await self._durable_resume(item)
+        # Store resolution may atomically deny the original worker call and retire
+        # sibling proxies too. Resume all affected idle sessions after a restart, not
+        # just the lead whose card was clicked. Live waiters are released by the store.
+        resumed_sessions = set()
+        resumes = []
+        for resolved in pending_before.values():
+            if (resolved.state == "resolved" and resolved.session_id not in resumed_sessions
+                    and not self.is_running(resolved.session_id)):
+                resumed_sessions.add(resolved.session_id)
+                resumes.append(self._durable_resume(resolved))
+        if resumes:
+            await asyncio.gather(*resumes)
         return ok
 
     async def _durable_resume(self, item) -> None:
@@ -2390,6 +2520,15 @@ class SessionManager:
         self.kick_team_tick()  # the assignee's feed has news
         return {"ok": True, "seq": event["seq"]}
 
+    def team_summary(self, team_id: str) -> dict[str, Any]:
+        from ..teams.summary import make_summary
+        team = self.teams.get(team_id)
+        if team is None:
+            return {"error": "team not found"}
+        if self._board_space(team.lead_session) != team.space:
+            return {"error": "the lead's board binding has changed"}
+        return make_summary(self, team, time.time())
+
     def session_board(self, session_id: str) -> dict[str, Any]:
         """The session's board: items grouped by the workspace-keyed space. Empty
         (space=None) when the workspace has no items — the rail hides itself."""
@@ -2413,6 +2552,11 @@ class SessionManager:
                     if payload.get("comment"):
                         item["blocker"] = self._clamp(payload["comment"], 120)
                     break
+        from ..teams.summary import all_events, waiting_items
+        waits = waiting_items(all_events(self.team_store, space), self.inbox, items)
+        for item in items:
+            if item["id"] in waits:
+                item["waiting"] = waits[item["id"]]
         return {"space": space, "name": Path(space).name, "items": items}
 
     def board_transition(
@@ -2429,7 +2573,7 @@ class SessionManager:
             return {"error": str(error)}
 
     def board_create_items(
-        self, session_id: str, items: list[dict[str, Any]]
+        self, session_id: str, items: list[dict[str, Any]], *, proposal: dict | None = None
     ) -> dict[str, Any]:
         """The decomposition gate's approved action: create the proposed items as
         the LEAD (its identity is the creator; the user's approval is the gate that
@@ -2444,6 +2588,8 @@ class SessionManager:
             persona=record.agent,
             session_id=session_id,
         )
+        if proposal is not None:
+            return self.team_store.create_proposal(space, actor, proposal)
         for entry in items:
             if not str((entry or {}).get("title", "")).strip() or not str(
                 (entry or {}).get("criteria", "")
@@ -2540,9 +2686,28 @@ class SessionManager:
             space=space,
             actor=actor,
             attachments=self.attachment_store,
+            # Resolve live grants at call time, including scratch and directories
+            # added or revoked since this engine was built. No engine => no access.
+            roots=lambda: getattr(self._engines.get(session_id), "roots", []),
+            on_change=self.kick_team_tick,
         ) + journal_tools(
             self.journal_store, actor=actor, space=space
         )
+        from ..teams.artifacts import artifact_tools
+
+        def team_identity():
+            # Resolve live membership, never a model-supplied team/board id.
+            team = self.teams.for_lead_session(session_id)
+            if team is None:
+                member = self.teams.for_worker_session(session_id)
+                if member is not None and member[1].actor == actor.id:
+                    team = member[0]
+            return team.team_id if team is not None and team.space == space else ""
+
+        tools += artifact_tools(self.team_store, self.attachment_store, space=space,
+            actor=actor, roots=lambda: getattr(self._engines.get(session_id), "roots", []),
+            team_identity=team_identity,
+            taint=lambda: bool(getattr(self._engines.get(session_id), "tainted", False)))
         if role == "lead":
             tools.append(self._steer_tool(session_id))
             tools.append(self._team_options_tool())
@@ -2649,8 +2814,9 @@ class SessionManager:
                     continue
                 out.append(
                     {
-                        "persona": pid,
-                        "name": m.name,
+                    "persona": pid,
+                    "name": m.name,
+                    "approval_guidance": m.approval_guidance,
                         "tagline": m.tagline,
                         "models": list(m.models),
                         "recommended_models": list(m.models),  # old name, one release
@@ -2703,7 +2869,8 @@ class SessionManager:
                 return {"error": "steering is unavailable in this surface"}
             asyncio.run_coroutine_threadsafe(
                 manager.deliver_to_session(
-                    match.session_id, f"[Lead] {message}".strip()
+                    match.session_id, f"[Lead] {message}".strip(),
+                    source={"connector": "team", "sender_name": team.lead_actor},
                 ),
                 manager._loop,
             )
@@ -2729,6 +2896,8 @@ class SessionManager:
             return {"approved": False, "error": "this session already leads a team"}
         space = self._space_for(record, record.workspace)
         workers: list[TeamWorker] = []
+        if any(not isinstance(m.get("approval_guidance", ""), str) or len(m.get("approval_guidance", "")) > 2400 for m in members):
+            return {"approved": False, "error": "approval_guidance must be text of at most 2400 characters"}
         used: set[str] = {"lead", "user", "board"}  # reserved handles
         for member in members:
             pid = str((member or {}).get("persona", "")).strip()
@@ -2811,6 +2980,7 @@ class SessionManager:
                     session_id=worker_sid,
                     model=model,
                     reason=str(member.get("reason", "")).strip(),
+                    approval_guidance=member.get("approval_guidance", ""),
                 )
             )
         chat_group = ""
@@ -2865,6 +3035,7 @@ class SessionManager:
                     "session_id": w.session_id,
                     "connectors": sorted(self.effective_connectors(w.session_id, w.persona)),
                     "approvals": "follow the lead",
+                    "scratch_directory": self._provision_scratch(w.session_id),
                 }
                 for w in workers
             ],
@@ -2906,14 +3077,18 @@ class SessionManager:
             delivered += await self._maybe_backstop_lead(team)
         return delivered
 
-    # The lead owns its cadence (sleep_for, stretch-when-quiet); this backstop only
-    # exists because prompts aren't guarantees. A forgotten timer must never orphan
-    # a running team — and it de-facto covers a worker dying without a transition
-    # (its item goes stale; the backstop wake surfaces it in the digest).
+    # Event-driven teams need no polling timer. This optional backstop catches
+    # idle, unfinished work only; healthy busy workers and human waits are quiet.
+    # Set to zero to disable it. Explicit user/connector schedules are unchanged.
     TEAM_LEAD_BACKSTOP_SECS = 600
+    TEAM_BATCH_SECONDS = 2.0
 
     def _lead_backstop_due(self, team) -> bool:
         sid = team.lead_session
+        if self.TEAM_LEAD_BACKSTOP_SECS <= 0 or team.paused:
+            return False
+        if sid in self.wakes.stopped_sessions:
+            return False
         if self.is_running(sid) or sid in self._team_inflight:
             return False
         if self.wakes.pending(sid):
@@ -2922,13 +3097,27 @@ class SessionManager:
         last = self._team_last_alive.setdefault(sid, time.time())
         if time.time() - last < self.TEAM_LEAD_BACKSTOP_SECS:
             return False
-        try:
-            items = self.team_store.list_items(team.space, self._user_actor())
-        except Exception:
-            return False
-        return any(
-            i["state"] in ("in_progress", "blocked", "review") for i in items
-        )
+        stalled = self._stalled_team_state(team)
+        return bool(stalled) and self._team_watchdog_alerted.get(sid) != stalled
+
+    def _stalled_team_state(self, team) -> tuple:
+        workers = {w.actor: w.session_id for w in team.workers}
+        workers[team.lead_actor] = team.lead_session
+        if self.inbox.list(session_id=team.lead_session, state="pending"):
+            return ()
+        stalled = []
+        for item in self.team_store.list_items(team.space, self._user_actor()):
+            if item["state"] not in ("in_progress", "blocked", "review"):
+                continue
+            sid = workers.get(item["assignee"])
+            if sid and (self.is_running(sid) or sid in self._team_inflight or self.wakes.pending(sid)
+                        or sid in self.wakes.stopped_sessions or self.inbox.list(session_id=sid, state="pending")):
+                continue
+            last = self._team_last_alive.get(sid, self._team_last_alive.get(team.lead_session, time.time()))
+            if time.time() - last >= self.TEAM_LEAD_BACKSTOP_SECS:
+                stalled.append((item["id"], item["state"], item["updated_seq"], item["assignee"],
+                                self._team_last_alive.get(sid, 0) if sid != team.lead_session else 0))
+        return tuple(stalled)
 
     async def _maybe_backstop_lead(self, team) -> int:
         if not self._lead_backstop_due(team):
@@ -2936,21 +3125,23 @@ class SessionManager:
         if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
             return 0
         sid = team.lead_session
+        stalled = self._stalled_team_state(team)
         self._team_last_alive[sid] = time.time()
         message = (
-            "⏰ Backstop check — work is in flight but you had no check-in timer"
-            " set.\n\n"
+            "Team watchdog — unfinished work has been idle for at least ten minutes.\n\n"
             + (self.team_staleness_digest(sid) or "Board state unavailable.")
-            + "\n\nGlance, act only if something needs you, and set your next"
-            " check-in with sleep_for (start 3–5 minutes; stretch when quiet)."
+            + "\n\nCheck for a stalled assignment or missing handoff. Act only if needed,"
+            " then finish your turn. Board decisions wake you automatically; do not start polling."
         )
         self._team_inflight.add(sid)
 
         async def _deliver() -> None:
             try:
-                await self.deliver_to_session(
+                accepted = await self.deliver_to_session(
                     sid, message, source=self._board_source(team, message)
                 )
+                if accepted:
+                    self._team_watchdog_alerted[sid] = stalled
             finally:
                 self._team_inflight.discard(sid)
 
@@ -2960,13 +3151,14 @@ class SessionManager:
     async def _drain_team_member(
         self, team, *, session_id: str, actor: str, is_lead: bool
     ) -> int:
+        self.reconcile_activity_receipts(session_id)
+        if session_id in self.wakes.stopped_sessions:
+            return 0
         # Interest follows the assignment relation: everyone's feed is the events
         # on their slice (assigned ∪ filed) — comments, moves, reassignments. The
         # lead additionally subscribes to the board-wide decision classes.
-        directs = self.team_store.feed_for(team.space, actor)
-        subs = (
-            self.team_store.subscribed_events(team.space, actor) if is_lead else []
-        )
+        page = self.team_store.delivery_page(team.space, actor, is_lead=is_lead)
+        directs, subs = page["directs"], page["subs"]
         if subs:
             seen = {e["seq"] for e in subs}
             directs = [e for e in directs if e["seq"] not in seen]
@@ -2976,13 +3168,17 @@ class SessionManager:
             if team.chat_enabled and team.chat_group
             else []
         )
+        receipt = self._board_receipt(team, actor, directs, subs, chats, chat_handle,
+                                      through_seq=page["through_seq"], is_lead=is_lead)
+        directs = self._actionable_team_events(team, directs, actor=actor, is_lead=is_lead)
+        subs = self._actionable_team_events(team, subs, actor=actor, is_lead=is_lead)
         # Cancel is top-priority: an in-flight worker gets interrupted NOW; the
         # queued notice (delivered when the turn dies) tells it why. Only for the
         # item's ASSIGNEE — a filer merely hears about it.
         def _holds(event) -> bool:
             try:
                 item = self.team_store.get_item(
-                    team.space, int(event["item_id"]), actor=self._user_actor()
+                    team.space, int(event["item_id"]), actor=self._user_actor(), include_comments=False
                 )
             except Exception:
                 return False
@@ -2995,46 +3191,193 @@ class SessionManager:
             and (e.get("payload") or {}).get("to") == "canceled"
             and _holds(e)
         ]
-        if cancels and self.is_running(session_id):
+        lost_assignments = [e for e in directs if e["kind"] == "item_assigned"
+                            and e["payload"].get("previous") == actor and not _holds(e)]
+        if (cancels or lost_assignments) and self.is_running(session_id):
             engine = self._engines.get(session_id)
             if engine is not None:
                 engine.request_interrupt()
-        if not directs and not subs and not chats:
+        message, rows = self._team_digest(
+            team, directs, subs, chats, is_lead=is_lead, reader=actor
+        )
+        if not rows:
+            # Quiet events remain in the board/UI, but do not create model turns
+            # or cancel a user-requested timer. Do not leap over queued input.
+            engine = self._engines.get(session_id)
+            if any((activity or {}).get("board") for _, _, activity in (engine._steering if engine else [])):
+                return 0
+            self._consume_board_receipt(receipt)
+            self._clear_team_batch(session_id)
+            if page["has_more"]:
+                self.kick_team_tick()
             return 0
+        if is_lead:
+            deadline = self._team_batch_deadlines.setdefault(session_id, time.monotonic() + self.TEAM_BATCH_SECONDS)
+            urgent = any(r.get("needs_attention") or r.get("kind") in ("waiting", "assigned")
+                         or (r.get("to") == "blocked" and not r.get("historical")) for r in rows)
+            timer_due = any(w.session_id == session_id and w.kind == "timer" for w in self.wakes.due())
+            if not urgent and not timer_due and time.monotonic() < deadline:
+                if session_id not in self._team_batch_handles:
+                    loop = asyncio.get_running_loop()
+                    def flush():
+                        self._team_batch_handles.pop(session_id, None)
+                        asyncio.create_task(self.team_tick())
+                    self._team_batch_handles[session_id] = loop.call_later(max(0, deadline - time.monotonic()), flush)
+                return 0
         if self.is_running(session_id) or session_id in self._team_inflight:
             return 0  # it will drain on its next turn end / next tick
         if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
             logger.warning("team %s paused for budget this hour", team.team_id)
             return 0
-        message, rows = self._team_digest(
-            team, directs, subs, chats, is_lead=is_lead, reader=actor
-        )
+        self._clear_team_batch(session_id)
         self._team_inflight.add(session_id)
         source = self._board_source(team, message, rows=rows)
 
         async def _deliver() -> None:
             try:
                 await self.deliver_to_session(session_id, message, source=source)
-                # Consume only after the turn dispatched: a crash before this replays
-                # the batch next tick (at-least-once, never silently lost).
-                # The feed cursor advances past BOTH batches: a subs event deduped
-                # out of directs must not replay as a direct next tick.
-                delivered = [e["seq"] for e in directs] + [e["seq"] for e in subs]
-                if delivered:
-                    self.team_store.consume_feed(team.space, actor, max(delivered))
-                if subs:
-                    self.team_store.consume_subscription(
-                        team.space, actor, subs[-1]["seq"]
-                    )
-                if chats:
-                    self.chat_store.consume(
-                        team.chat_group, chat_handle, chats[-1]["seq"]
-                    )
+                # Cursors are acknowledged with the persisted incoming turn, not
+                # after model completion. A user turn can consume this batch first.
             finally:
                 self._team_inflight.discard(session_id)
+                self.kick_team_tick()
 
         asyncio.create_task(_deliver())
         return 1
+
+    def _clear_team_batch(self, session_id: str) -> None:
+        self._team_batch_deadlines.pop(session_id, None)
+        handle = self._team_batch_handles.pop(session_id, None)
+        if handle is not None:
+            handle.cancel()
+
+    @staticmethod
+    def _board_receipt(team, actor, directs, subs, chats, chat_handle, *, through_seq=None, is_lead=False) -> dict:
+        return {"space": team.space, "actor": actor,
+                "feed": through_seq if through_seq is not None else max([e["seq"] for e in directs + subs], default=0),
+                "subscription": through_seq if through_seq is not None and is_lead else max([e["seq"] for e in subs], default=0),
+                "chat_group": team.chat_group, "chat_handle": chat_handle,
+                "chat": max([e["seq"] for e in chats], default=0)}
+
+    def _consume_board_receipt(self, receipt: dict) -> None:
+        if receipt.get("feed"):
+            self.team_store.consume_feed(receipt["space"], receipt["actor"], receipt["feed"])
+        if receipt.get("subscription"):
+            self.team_store.consume_subscription(receipt["space"], receipt["actor"], receipt["subscription"])
+        if receipt.get("chat"):
+            self.chat_store.consume(receipt["chat_group"], receipt["chat_handle"], receipt["chat"])
+
+    def _pending_board_context(self, session_id: str) -> tuple[str, list, dict]:
+        team = self.teams.for_lead_session(session_id)
+        is_lead = team is not None
+        found = self.teams.for_worker_session(session_id) if not team else None
+        if found:
+            team, worker = found
+        if team is None or team.paused:
+            return "", [], {}
+        actor = team.lead_actor if is_lead else worker.actor
+        engine = self._engines.get(session_id)
+        queued = [(a or {}).get("board") or {} for _, _, a in (engine._steering if engine else [])]
+        feed_through = max([r.get("feed", 0) for r in queued], default=0)
+        sub_through = max([r.get("subscription", 0) for r in queued], default=0)
+        page = self.team_store.delivery_page(team.space, actor, is_lead=is_lead,
+                                             feed_after=feed_through, subscription_after=sub_through)
+        directs, subs = page["directs"], page["subs"]
+        seen = {e["seq"] for e in subs}
+        directs = [e for e in directs if e["seq"] not in seen]
+        handle = "lead" if is_lead else actor
+        chats = self.chat_store.unread_for(team.chat_group, handle) if team.chat_enabled and team.chat_group else []
+        chat_through = max([r.get("chat", 0) for r in queued], default=0)
+        chats = [e for e in chats if e["seq"] > chat_through]
+        receipt = self._board_receipt(team, actor, directs, subs, chats, handle,
+                                      through_seq=page["through_seq"], is_lead=is_lead)
+        directs = self._actionable_team_events(team, directs, actor=actor, is_lead=is_lead)
+        subs = self._actionable_team_events(team, subs, actor=actor, is_lead=is_lead)
+        text, rows = self._team_digest(team, directs, subs, chats, is_lead=is_lead, reader=actor)
+        return text if rows else "", rows, receipt
+
+    def _actionable_team_events(self, team, events, *, actor: str, is_lead: bool) -> list:
+        """Wake policy, not storage/visibility policy. No prose classification.
+
+        Publications/notes are evidence, review is the handoff. Explicit questions
+        use needs_attention; human notes and lead instructions are never muted.
+        A dependency completion wakes only workers with live dependent work.
+        """
+        items = {i["id"]: i for i in self.team_store.list_items(team.space, self._user_actor())}
+        active = [i for i in items.values() if i["assignee"] == actor and i["state"] not in ("done", "canceled")]
+        prerequisites = {link["item"] for i in active for link in i.get("links", []) if link["kind"] == "blocked_by"}
+
+        def actionable(e):
+            kind, p = e["kind"], e.get("payload") or {}
+            item = items.get(e.get("item_id"))
+            if kind == WORKER_WAITING:
+                return is_lead  # digest also checks the exact prompt is still pending
+            if kind == "item_commented":
+                if p.get("attachments") or p.get("artifact"):
+                    return bool(p.get("needs_attention")) and is_lead
+                if e.get("actor_role") == "user":
+                    return True
+                if is_lead:
+                    return bool(p.get("needs_attention"))
+                return e.get("actor_role") == "lead" and bool(active or (item and item["assignee"] == actor))
+            if kind == "item_assigned":
+                if is_lead:
+                    return bool(p.get("claimed")) or e.get("actor_role") == "user" or actor in (p.get("assignee"), p.get("previous"))
+                return bool(item) and ((p.get("assignee") == actor and item["assignee"] == actor)
+                                       or (p.get("previous") == actor and item["assignee"] != actor))
+            if kind == "item_created":
+                return is_lead
+            if kind != "item_transitioned" or item is None or item["state"] != p.get("to"):
+                return False
+            if is_lead:
+                return p.get("to") in ("review", "blocked") or e.get("actor_role") == "user"
+            if item["id"] in prerequisites and p.get("to") in ("done", "canceled"):
+                return True  # includes a worker's own accepted prerequisite
+            if item["assignee"] == actor:
+                return p.get("to") == "canceled" or (p.get("to") in ("open", "in_progress") and p.get("from") in ("review", "blocked", "canceled"))
+            return False
+
+        return [e for e in events if actionable(e)]
+
+    def prepare_activity(self, session_id: str, reason: str, *, wake=None, include_board=True) -> dict:
+        """Cancel idle sleep and gather context; acknowledgement waits for durable input."""
+        self.reconcile_activity_receipts(session_id)
+        if reason == "user activity":
+            self.wakes.set_stopped(session_id, False)
+        if wake is None or wake.kind != "timer":
+            self.wakes.cancel_sleep(session_id, reason)
+        cancelled = self.wakes.cancelled_context(session_id)
+        engine = self._engines.get(session_id)
+        queued_ids = {wid for _, _, a in (engine._steering if engine else [])
+                      for wid in (a or {}).get("wake_ids", [])}
+        cancelled = [w for w in cancelled if w.id not in queued_ids]
+        notes = [f"The earlier check-in ({w.fire_at}) was cancelled because {w.cancellation_reason}."
+                 + (f" Earlier agent reminder: {w.note}" if w.note else "") for w in cancelled]
+        text, rows, receipt = self._pending_board_context(session_id) if include_board else ("", [], {})
+        if text and reason != "board activity":
+            notes.append(text)
+        if notes:
+            notes.insert(0, "Runtime activity context. Reminders below were written by the agent earlier; newer user instructions take precedence.")
+        return {"id": uuid.uuid4().hex, "text": "\n\n".join(notes), "wake_ids": [w.id for w in cancelled] + ([wake.id] if wake else []),
+                "board": receipt, "board_text": text, "board_rows": rows}
+
+    def reconcile_activity_receipts(self, session_id: str) -> None:
+        record = self.session_store.load(session_id)
+        messages = record.messages if record else []
+        for message in messages:
+            receipt = message.get("_activity")
+            if receipt and receipt.get("id") not in self._activity_acknowledged:
+                self.wakes.acknowledge(receipt.get("wake_ids", []))
+                self._consume_board_receipt(receipt.get("board") or {})
+                self._activity_acknowledged.add(receipt.get("id"))
+
+    def stop_session(self, session_id: str) -> None:
+        self.wakes.set_stopped(session_id, True)
+        self.wakes.cancel_sleep(session_id, "the user stopped the session")
+        self._clear_team_batch(session_id)
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.request_interrupt()
 
     # Long comment/hand-off bodies are already durable on the board — the wake
     # message's job is to say what needs DECISIONS, not to re-carry the evidence
@@ -3070,7 +3413,12 @@ class SessionManager:
         )
         lines: list[str] = []
         rows: list[dict] = []
-        for event in directs + subs:
+        ordered = sorted(directs + subs, key=lambda e: e["seq"])
+        first = {}
+        for event in ordered:
+            first.setdefault(event.get("item_id"), event["seq"])
+        # Group related changes, preserving every ordered transition within an item.
+        for event in sorted(ordered, key=lambda e: (first[e.get("item_id")], e["seq"])):
             item_id = event.get("item_id")
             payload = event.get("payload") or {}
             item = None
@@ -3086,6 +3434,8 @@ class SessionManager:
                 "item": item_id,
                 "title": item["title"] if item else "",
                 "actor": event.get("actor", ""),
+                "seq": event["seq"],
+                "needs_attention": bool(payload.get("needs_attention")) or event.get("actor_role") == "user",
             }
             if event["kind"] == "item_assigned":
                 if item is None:
@@ -3116,14 +3466,20 @@ class SessionManager:
                     continue
                 lines.append(
                     f"You've been assigned work item {title}.\n"
-                    f"  Done when: {item['criteria']}"
+                    f"  Acceptance criteria: {item['criteria']}"
                     + (f"\n  Details: {item['description']}" if item["description"] else "")
+                    + ("\n  Approved proposal context (intent, not access grants): "
+                       + json.dumps(item["proposal"], ensure_ascii=False) if item.get("proposal") else "")
                 )
                 rows.append({**row, "kind": "assigned", "assignee": assignee})
             elif event["kind"] == "item_transitioned":
                 to = payload.get("to", "?")
                 comment = clamp(payload.get("comment") or "")
-                note = f" — “{comment}”" if comment else ""
+                note = (f" — “{comment}” (comment seq {event['seq']}; "
+                        f"get_item_comment(item={item_id}, seq={event['seq']}))") if comment else ""
+                historical = bool(item and item.get("state") != to)
+                if historical:
+                    note += f" (historical transition; current state: {item['state']})"
                 if to == "canceled" and not is_lead:
                     lines.append(
                         f"{title} was CANCELED by {event['actor']}{note} — stop any"
@@ -3135,7 +3491,11 @@ class SessionManager:
                     {
                         **row,
                         "kind": "moved",
+                        "from": payload.get("from"),
+                        "refs": payload.get("refs") or [],
                         "to": to,
+                        "historical": historical,
+                        "current_state": item.get("state") if item else None,
                         "note": self._clamp(
                             payload.get("comment") or "", self.DIGEST_CLAMP_UI
                         ),
@@ -3145,6 +3505,21 @@ class SessionManager:
                 lines.append(f"New item filed by {event['actor']}: {title}")
                 rows.append({**row, "kind": "filed"})
             elif event["kind"] == WORKER_WAITING:
+                if not is_lead:
+                    # A collaborator is not an approval authority. Keep the wait
+                    # informational when it accompanies actual assigned work.
+                    lines.append(f"{event['actor']} is waiting for the lead or user{(' on ' + title) if item_id is not None else ''}.")
+                    rows.append({**row, "kind": "waiting", "tool": payload.get("tool") or "", "prompt_id": payload.get("prompt_id", "")})
+                    continue
+                prompt = self.inbox.get(payload.get("prompt_id", ""))
+                if prompt is None or prompt.state != "pending":
+                    continue  # resolved/reissued approvals are history, not decisions
+                if prompt.kind != "approval":
+                    lines.append(f"{event['actor']} needs a human answer: {clamp(prompt.title)}."
+                                 " The user answers in the worker session or Inbox; do not use decide_worker_call for this question.")
+                    rows.append({**row, "kind": "waiting", "tool": payload.get("tool") or "ask_user",
+                                 "note": self._clamp(prompt.title, self.DIGEST_CLAMP_UI), "prompt_id": prompt.id})
+                    continue
                 # §11.6: a worker parked on a tool call under a Manual lead — the lead
                 # decides (its decision asks the human), or the human answers directly.
                 tool = payload.get("tool") or "a tool"
@@ -3162,6 +3537,7 @@ class SessionManager:
                 lines.append(
                     f"Comment on {title} by {event['actor']}:"
                     f" {clamp(payload.get('body', ''))}"
+                    f" (seq {event['seq']}; get_item_comment(item={item_id}, seq={event['seq']}))"
                 )
                 rows.append(
                     {
@@ -3185,9 +3561,11 @@ class SessionManager:
         body = "\n".join(f"- {line}" for line in lines) or "- (no detail)"
         if is_lead:
             message = (
-                "⏰ Board wake — your team needs decisions:\n"
+                "Team update — your team needs decisions:\n"
                 + body
-                + "\n\nFull hand-off comments live on the board (get_item)."
+                + "\n\nRead cited handoffs with get_item_comment(item, seq);"
+                " get_item reads current details, not history."
+                " Act on current state only, not historical transitions."
                 " Verify review items against their acceptance criteria (then"
                 " done, or send back with a comment), unblock or reassign blocked"
                 " items, and triage new filings. Steer only where needed."
@@ -4002,6 +4380,32 @@ class SessionManager:
         record = self.session_store.load(session_id)
         return str(getattr(record, "model", "") or self.model)
 
+    def team_planned_items(self, session_id: str, members: list) -> list[dict]:
+        """Resolve declared responsibilities only within the lead's actual board."""
+        ids = list(dict.fromkeys(i for m in members for i in m.get("item_ids", [])))
+        if not ids:
+            return []
+        record = self.session_store.load(session_id)
+        if record is None or not record.workspace:
+            raise ValueError("planned responsibilities need a session workspace")
+        space = self._space_for(record, record.workspace)
+        actor = TeamActor(id=f"{record.agent}:{session_id[:8]}", role=TeamRole.LEAD,
+                          persona=record.agent, session_id=session_id)
+        result = []
+        for item_id in ids:
+            item = self.team_store.get_item(space, item_id, actor=actor)
+            if item["state"] == "canceled":
+                raise ValueError(f"item {item_id} is canceled; revise planned responsibilities")
+            row = {"id": item_id, "title": item["title"]}
+            context = item.get("proposal")
+            if context:
+                final_id = context["item_ids"][context["final_acceptance"]["item_key"]]
+                final = self.team_store.get_item(space, final_id, actor=actor)
+                row["final_acceptance"] = {"id": final_id, "title": final["title"],
+                    "owner": "lead" if final["assignee"] == actor.id else "assigned_worker"}
+            result.append(row)
+        return result
+
     def team_card_extras(self, session_id: str, members: list) -> dict[str, Any]:
         """Everything the staffing card needs beyond the lead's raw proposal, computed on
         THIS machine (where the workers will run): the connector offer, the other connected
@@ -4029,6 +4433,7 @@ class SessionManager:
         runnable = [m for m in self._curated_models() if self.model_selectable(m)]
         return {
             "members": decorated,
+            "planned_items": self.team_planned_items(session_id, members),
             "offer": {pid: self.connector_offer(pid) for pid in dict.fromkeys(personas)},
             "other_connected": self.other_connected(),
             "lead_mode": self.session_mode_value(session_id),
@@ -4274,6 +4679,7 @@ class SessionManager:
     def set_auto_approve(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve"] = bool(on)
         self._save_prefs()
+        self.sync_cached_reviewers()
         return {
             "ok": True,
             "auto_approve": self.auto_approve(),
@@ -4283,6 +4689,7 @@ class SessionManager:
     def set_auto_approve_shadow(self, on: Any) -> dict[str, Any]:
         self._prefs["auto_approve_shadow"] = bool(on)
         self._save_prefs()
+        self.sync_cached_reviewers()
         return {
             "ok": True,
             "auto_approve": self.auto_approve(),
@@ -5080,6 +5487,31 @@ class SessionManager:
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
         is dropped, never fatal to the turn (delivery is socket-independent)."""
+        if message.get("type") == "turn_start":
+            self.reconcile_obsolete_prompts(session_id)
+        engine = self._engines.get(session_id)
+        if message.get("type") == "iteration_end" and engine and engine._steering:
+            # A sleep tool may finish after steering was queued. The accepted
+            # interruption still wins; carry that newly registered note too.
+            extra = self.prepare_activity(session_id, "user activity", include_board=False)
+            text, source, activity = engine._steering[0]
+            activity = activity or extra
+            if activity is not extra:
+                activity["text"] = "\n\n".join(filter(None, [activity.get("text"), extra["text"]]))
+                activity["wake_ids"] = list(dict.fromkeys(activity.get("wake_ids", []) + extra["wake_ids"]))
+            engine._steering[0] = (text, source, activity)
+        if message.get("type") in {"turn_start", "iteration_end", "permission_required", "turn_done"}:
+            self.persist_session(session_id)
+            self.reconcile_activity_receipts(session_id)
+        data = message.get("data") or {}
+        if message.get("type") == "team_proposed":
+            message = {**message, "data": {**data, **self.team_card_extras(session_id, data.get("members") or [])}}
+        if message.get("type") == "mode_notice" and engine:
+            message = {**message, "data": {**data, "mode": engine.permissions.mode.value}}
+        if message.get("type") == "permission_required" and data.get("name") == "decide_worker_call":
+            worker_call = self.worker_call_for(data.get("arguments") or {}, lead_session=session_id)
+            if worker_call:
+                message = {**message, "data": {**data, "worker_call": worker_call}}
         for cb in list(self._session_clients.get(session_id, ())):
             try:
                 await cb(message)
@@ -5087,13 +5519,16 @@ class SessionManager:
                 self.unregister_session_client(session_id, cb)
 
     async def aclose(self) -> None:
+        for handle in self._team_batch_handles.values():
+            handle.cancel()
+        self._team_batch_handles.clear()
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
 
     # -- automation (scheduled tasks) -------------------------------------------
-    def worker_call_for(self, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    def worker_call_for(self, arguments: dict[str, Any], *, lead_session: str | None = None) -> dict[str, Any] | None:
         """The worker's waiting tool call that a lead's `decide_worker_call` answers
         (`call_id` is the worker's parked Inbox item). Attached to the lead's approval card
         so the human sees WHAT is being allowed or denied, not an id. None when the item is
@@ -5101,14 +5536,137 @@ class SessionManager:
         item = self.inbox.get(str((arguments or {}).get("call_id") or ""))
         if item is None or item.kind != "approval":
             return None
+        if lead_session is not None and not self._owned_worker_prompt(lead_session, arguments):
+            return None
         data = item.data or {}
+        task_fields = {}
+        found = self.teams.for_worker_session(item.session_id)
+        if found:
+            from ..teams.summary import all_events
+            team, _worker = found
+            for event in all_events(self.team_store, team.space):
+                if event["kind"] == WORKER_WAITING and event["payload"].get("prompt_id") == item.id and event.get("item_id") is not None:
+                    try:
+                        task = self.team_store.get_item(team.space, event["item_id"], actor=self._user_actor())
+                        task_fields = {"item_id": task["id"], "item_title": task["title"]}
+                    except TeamsBoardError:
+                        pass
         return {
+            **task_fields,
             "worker": str((arguments or {}).get("worker") or ""),
             "tool": str(data.get("tool") or ""),
             "arguments": data.get("arguments") or {},
             "reason": (item.body or "").split("\n", 1)[0],
             "state": item.state,
             "resolution": item.resolution,
+        }
+
+    def _owned_worker_prompt(self, lead_session: str, arguments: dict):
+        team = self.teams.for_lead_session(lead_session)
+        member = next((w for w in team.workers if w.actor == str(arguments.get("worker") or "").strip().lower()), None) if team else None
+        item = self.inbox.get(str(arguments.get("call_id") or ""))
+        return item if member and item and item.kind == "approval" and item.session_id == member.session_id else None
+
+    def approval_owner_history(self, session_id: str, engine: TurnEngine) -> tuple[str, list[dict]]:
+        """Worker reviews use direct owner messages from the lead, never lead steering.
+
+        Extraction is mechanical; no instruction classifier or permission summary.
+        """
+        member = self.teams.for_worker_session(session_id)
+        if member:
+            if self.session_store.load(member[0].lead_session) is None:
+                raise ValueError("The approval owner session is unavailable")
+            return self.get_engine(member[0].lead_session)._user_history()
+        return engine._user_history()
+
+    def approval_context(self, session_id: str) -> dict:
+        """Explicit, source-labelled reviewer inputs; never script/env contents.
+
+        Resolve at review time so assignments and settings cannot silently go stale.
+        Designer guidance is domain context. Only the staffing gate writes approved
+        worker guidance; steer_worker cannot change it.
+        """
+        record = self.session_store.load(session_id)
+        member = self.teams.for_worker_session(session_id)
+        team = member[0] if member else self.teams.for_lead_session(session_id)
+        persona = member[1].persona if member else (record.agent if record else "")
+        def guidance(pid):
+            entry = self.personas.get(pid) if pid else None
+            return getattr(getattr(entry, "manifest", None), "approval_guidance", "")
+        owner = self.session_store.load(team.lead_session) if team else record
+        if team and owner is None:
+            raise ValueError("The approval owner session is unavailable")
+        actor = member[1].actor if member else (team.lead_actor if team else "")
+        assignments = self.team_store.list_items(
+            team.space, TeamActor(team.lead_actor, TeamRole.LEAD), assignee=actor,
+        ) if team else []
+        engine = self._engines.get(session_id)
+        worker_input = None
+        if member and engine:
+            request, history = engine._user_history()
+            worker_input = {"request": request, "history": history}
+        return {
+            "coworker_definition": {"persona": persona, "approval_guidance": guidance(persona)},
+            "team_definition": {"persona": owner.agent, "approval_guidance": guidance(owner.agent)} if team and owner else None,
+            "user_approved_worker_guidance": member[1].approval_guidance if member else "",
+            "assignments_agent_authored_not_access_grants": [
+                {key: item.get(key) for key in ("id", "title", "description", "criteria", "state", "assignee")}
+                for item in assignments
+            ],
+            "user_saved_rules": self._user_rules_for(owner.session_id) if owner else "",
+            # Includes direct messages sent to the worker, not just its lead. Legacy
+            # unsourced steering is not certified as human-authored by this field.
+            "worker_session_unsourced_input": worker_input,
+            "connectors": sorted(self.effective_connectors(session_id, persona)),
+            "workspace": str(engine.permissions.workspace_root or "") if engine else str(record.workspace or "") if record else "",
+            "working_folders": [{"path": str(p), "writable": w} for p, w in engine.permissions._resolved_roots()] if engine else [],
+            "mode": engine.permissions.mode.value if engine else (record.mode if record else ""),
+        }
+
+    def worker_review_context(self, lead_session: str, arguments: dict) -> dict:
+        """Resolve exactly one owned, pending call and carry its permission floors.
+
+        Read only harness state. No worker transcript, lead rationale, file contents,
+        or environment values are added to the reviewer's context.
+        """
+        from ..providers import ToolCall
+        item = self._owned_worker_prompt(lead_session, arguments)
+        if item is None or item.state != "pending":
+            return {"hard_deny": True, "reason": "The worker request is missing, belongs to another team, or was already answered."}
+        name = item.data.get("tool")
+        args = item.data.get("arguments")
+        if not isinstance(name, str) or not isinstance(args, dict) or name == "decide_worker_call":
+            return {"hard_deny": True, "reason": "The original worker action is invalid."}
+        worker = self.get_engine(item.session_id)
+        spec = worker.registry.get(name)
+        if spec is None:
+            return {"hard_deny": True, "reason": "The worker tool is no longer available."}
+        decision = worker.permissions.evaluate(name, args, spec.metadata)
+        call = ToolCall(id=item.id, name=name, arguments=args)
+        downloaded = worker._downloaded_target(call) is not None
+        # Preserve the floor recorded when the worker parked the call, even after
+        # an engine rebuild loses runtime-only provenance.
+        saved = item.data.get("escalation") or {}
+        human_only = decision.human_only or downloaded or saved.get("kind") == "human_required"
+        reason = (saved.get("reason") if saved.get("kind") == "human_required" else None) or (
+            "The worker would execute a downloaded file; a human must decide." if downloaded else decision.reason
+        )
+        return {
+            "tool": name, "arguments": args, "reason": reason,
+            "hard_deny": not decision.allowed and not decision.needs_user,
+            "human_only": human_only,
+            "provenance": item.data.get("provenance") or worker._provenance(call),
+            "context": {
+                "worker": arguments.get("worker"), "request_id": item.id,
+                "workspace": str(worker.permissions.workspace_root or ""),
+                "working_folders": [{"path": str(path), "writable": writable} for path, writable in worker.permissions._resolved_roots()],
+                "permission_reason": decision.reason, "mode": worker.permissions.mode.value,
+                "settings_epoch": worker.reviewer_settings_epoch,
+                "category": getattr(spec.metadata, "category", ""),
+                "destination": item.data.get("mcp_destination"),
+                "runtime_facts": getattr(worker, "runtime_facts", {}),
+                "approval_guidance_context": self.approval_context(item.session_id),
+            },
         }
 
     def approval_prompt_data(self, session_id: str, request) -> dict[str, Any]:
@@ -5123,11 +5681,16 @@ class SessionManager:
         data: dict[str, Any] = {
             "tool": request.tool_name,
             "arguments": getattr(request, "arguments", None) or {},
+            "escalation": getattr(request, "escalation", None),
+            "provenance": getattr(request, "provenance", ""),
         }
         if request.tool_name == "decide_worker_call":
-            worker_call = self.worker_call_for(getattr(request, "arguments", None) or {})
+            worker_call = self.worker_call_for(data["arguments"], lead_session=session_id)
             if worker_call:
                 data["worker_call"] = worker_call
+                # Store-owned dependency: atomically retires this redundant gate
+                # if the original worker prompt resolves before or after creation.
+                data["worker_prompt_id"] = str(data["arguments"]["call_id"])
         # §35 parity (OPE-136 found-in-testing): the parked card must show the same
         # scope chip and reason the live card would — carry the tool category, the
         # MCP destination stamped on the request, and any non-boilerplate reason.
@@ -5202,6 +5765,15 @@ class SessionManager:
         """
         from ..engine import ApprovalOutcome
 
+        if resolution == "superseded":
+            original = self._owned_worker_prompt(
+                session_id, getattr(request, "arguments", None) or {}
+            ) if request.tool_name == "decide_worker_call" else None
+            return (
+                ApprovalOutcome.SUPERSEDED
+                if original is not None and original.state == "resolved"
+                else ApprovalOutcome.DENY
+            )
         if resolution == "always_task":
             minted = self.mint_task_rule(
                 session_id,
@@ -5489,14 +6061,14 @@ class SessionManager:
 
     # -- self-wake resumption ---------------------------------------------------
     async def _scheduler_tick(self) -> None:
-        """The shared per-tick work: resume due self-wakes, then drain team queues.
+        """Drain team queues before due sleeps so simultaneous activity combines.
         Team deliveries dispatch as tasks (a long worker turn must not stall the
         scheduler)."""
-        await self.resume_due_wakes()
         try:
             await self.team_tick()
         except Exception:
             logger.exception("team tick failed")
+        await self.resume_due_wakes()
 
     async def resume_due_wakes(self) -> int:
         """Resume sessions whose self-wakes are due (called each scheduler tick). A suspended
@@ -5505,13 +6077,25 @@ class SessionManager:
         """
         resumed = 0
         for wake in self.wakes.due():
-            try:
-                await self._resume_wake(wake)
-                resumed += 1
-            except Exception:
-                pass
-            finally:
-                self.wakes.mark_fired(wake.id)
+            self.reconcile_activity_receipts(wake.session_id)
+            if wake not in self.wakes.pending(wake.session_id):
+                continue
+            if self.is_running(wake.session_id) or wake.session_id in self._team_inflight:
+                continue
+            if wake.kind == "timer" and wake.session_id in self.wakes.stopped_sessions:
+                self.wakes.cancel_sleep(wake.session_id, "the user stopped the session")
+                continue
+            self._team_inflight.add(wake.session_id)
+            async def deliver(wake=wake):
+                try:
+                    await self._resume_wake(wake)
+                except Exception:
+                    logger.exception("self-wake delivery failed for %s", wake.session_id)
+                finally:
+                    self._team_inflight.discard(wake.session_id)
+                    self.kick_team_tick()
+            asyncio.create_task(deliver())
+            resumed += 1
         return resumed
 
     def mark_running(self, session_id: str) -> None:
@@ -5534,6 +6118,8 @@ class SessionManager:
 
     def mark_idle(self, session_id: str) -> None:
         self._running_sessions.discard(session_id)
+        if session_id in self.wakes.stopped_sessions:
+            self.wakes.cancel_sleep(session_id, "the user stopped the session")
         if session_id in self._stale_engines:
             self._stale_engines.discard(session_id)
             self._engines.pop(session_id, None)
@@ -5545,7 +6131,7 @@ class SessionManager:
         # Team sessions: a finished turn is the moment new board events exist (an
         # assign, a review transition) — kick the queue drain now instead of waiting
         # for the next scheduler tick. Cheap no-op for teamless sessions.
-        if self.teams.for_lead_session(session_id):
+        if self.teams.for_lead_session(session_id) or self.teams.for_worker_session(session_id):
             self._team_last_alive[session_id] = time.time()
         if self._loop is not None and (
             self.teams.for_lead_session(session_id)
@@ -5568,11 +6154,11 @@ class SessionManager:
         digest = self.team_staleness_digest(wake.session_id)
         if digest:
             message = f"{message}\n\n{digest}"
-        await self.deliver_to_session(wake.session_id, message)
+        await self.deliver_to_session(wake.session_id, message, wake=wake)
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
-    ) -> None:
+        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None
+    ) -> bool:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
         turn at its next step (don't start a colliding run). Idle: run a fresh background turn
@@ -5582,12 +6168,36 @@ class SessionManager:
         """
         engine = self.get_engine(session_id)
         if engine is None:
-            return
+            return False
+        board_delivery = (source or {}).get("connector") == "board"
+        if wake is not None and wake not in self.wakes.pending(session_id):
+            return False  # user/board activity won the scheduled-task race
+        if board_delivery and session_id in self.wakes.stopped_sessions:
+            return False
+        if board_delivery and not self._pending_board_context(session_id)[0]:
+            # Backstop messages are not feed deliveries.
+            if (source or {}).get("board", {}).get("rows"):
+                return False
         if not self.try_mark_running(session_id):
-            engine.queue_steering(message, source)
-            return
+            if board_delivery or wake is not None:
+                return False  # defer; never inject routine wakes into a running turn
+            activity = self.prepare_activity(session_id, "user activity")
+            engine.queue_steering(message, source, activity)
+            return True
         try:
-            async for event in engine.run(message, source=source):
+            reason = "board activity" if board_delivery else "a scheduled check-in" if wake else "user activity"
+            activity = self.prepare_activity(session_id, reason, wake=wake)
+            if board_delivery and activity["board_text"]:
+                message = activity["board_text"]
+                source = {**source, "text": message, "board": {"rows": activity["board_rows"]}}
+            elif wake is not None and wake.kind == "timer":
+                team = self.teams.for_lead_session(session_id)
+                if team is not None:
+                    # Display-only tagging: keep timer receipt and cancellation
+                    # semantics intact while grouping check-ins in the transcript.
+                    source = self._board_source(team, message, rows=activity["board_rows"])
+                    source["board"]["check_in"] = True
+            async for event in engine.run(message, source=source, activity=activity):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -5602,6 +6212,7 @@ class SessionManager:
                     )
                     self.unrouted.record(session_id, "-", message, reason=reason)
             self.save(session_id, engine)
+            self.reconcile_activity_receipts(session_id)
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
@@ -5613,6 +6224,7 @@ class SessionManager:
         finally:
             self.mark_idle(session_id)
             await self.broadcast_session(session_id, {"type": "turn_done", "data": {}})
+        return True
 
     # -- channel subscriptions (inbound messaging) ------------------------------
     async def _dispatch_inbound(self, event) -> None:
@@ -5674,6 +6286,12 @@ class SessionManager:
                         )
                     return
                 self._report_orphan_subscription(channel)
+                if cfg:
+                    self.unrouted.record(
+                        src.target, who, text,
+                        reason=f"target session {target} is missing — select an existing session; no replacement was started",
+                    )
+                    return
             subs = self.subscriptions.for_channel(channel)
             # §31 mention router: a direct @-mention of the bot outranks the passive fan-out —
             # subscribed sessions must answer it; an unsubscribed channel spawns (or steers)
@@ -5943,56 +6561,8 @@ class SessionManager:
                 logger.warning("reply-only frame for %s failed: %s", src.chat_id, getattr(res, "error", ""))
         except Exception:
             logger.exception("reply-only frame for %s failed", src.chat_id)
-
-    def _prepare_checkout(self, owner_repo: str, base_dir: str, *, number: str, kind: str, head_ref: str = "", worktree: bool = True, is_pr: bool | None = None) -> str:
-        """The folder a configuration-started session works in (spec §10.4).
-        Clone once at <base>/<repo>/main; with `worktree`, add <base>/<repo>/pr-N
-        (or issue-N) on the PR head, else the default branch. Returns the path.
-        Raises ValueError with a readable reason."""
-        from ..connectors.integration_tools import _github_git_auth_args, _github_git_base, _run_git
-
-        if "/" not in owner_repo:
-            raise ValueError(f"not a repository: {owner_repo!r}")
-        owner, repo = owner_repo.split("/", 1)
-        root = Path(base_dir).expanduser()
-        try:
-            root = ensure_under_base(root, "base directory")
-        except OutsideBaseDir as exc:
-            raise ValueError(str(exc)) from None
-        clone = root / repo / "main"
-        auth = _github_git_auth_args(self.secrets, owner)
-        if not (clone / ".git").exists():
-            clone.parent.mkdir(parents=True, exist_ok=True)
-            _out, err = _run_git([*auth, "clone", f"{_github_git_base()}/{owner}/{repo}.git", str(clone)])
-            if err:
-                raise ValueError(f"clone failed: {err}")
-        else:
-            _run_git([*auth, "-C", str(clone), "fetch", "--prune", "origin"])
-        if not worktree:
-            return str(clone)
-        # A PR thread (opened, merged, or a mention on one) checks the PR head out;
-        # an issue works on the default branch.
-        pr = bool(is_pr) if is_pr is not None else kind in ("pr_open", "pr_merge")
-        tag = f"pr-{number}" if pr and number else (f"issue-{number}" if number else "work")
-        path = root / repo / tag
-        if path.exists():
-            return str(path)
-        if pr and number and kind != "pr_merge":
-            # The PR head by number works whether or not the branch name is known.
-            _out, err = _run_git([*auth, "-C", str(clone), "fetch", "origin", f"pull/{number}/head:refs/remotes/origin/{tag}"])
-            if err:
-                raise ValueError(f"fetch of PR #{number} failed: {err}")
-            start = f"origin/{tag}"
-        else:
-            head, err = _run_git(["-C", str(clone), "rev-parse", "--abbrev-ref", "HEAD"])
-            start = f"origin/{head}" if head else "HEAD"
-        _out, err = _run_git(["-C", str(clone), "worktree", "add", "-B", tag, str(path), start])
-        if err:
-            raise ValueError(f"worktree failed: {err}")
-        return str(path)
-
     def _remove_spawn_worktree(self, session_id: str, record=None) -> None:
-        """A configuration-started session's worktree goes with it; the clone stays."""
+        """Legacy harness-owned checkouts only; agent-owned work is never removed here."""
         from ..connectors.integration_tools import _run_git
 
         record = record if record is not None else self.session_store.load(session_id)
@@ -6010,7 +6580,7 @@ class SessionManager:
 
     async def _spawn_configured_session(self, event, ms: MessageSource, cfg: dict) -> None:
         """A configuration's "new session" target (spec §10.4): coworker, first
-        runnable model, a checkout when a base directory was set, the listed
+        runnable model, a fresh directory (never an automatic checkout), the listed
         skills, the instructions — then the opening turn."""
         import uuid
 
@@ -6026,28 +6596,20 @@ class SessionManager:
         number = str(frame.get("number") or "")
         kind = str(cfg.get("event") or frame.get("kind") or "")
         owner_repo = str(frame.get("owner_repo") or src.chat_id.split("#", 1)[0])
+        sid = uuid.uuid4().hex
         workspace = None
-        clone = worktree = ""
         base_dir = str(spawn.get("base_dir") or "")
         if base_dir:
             try:
-                path = await asyncio.to_thread(
-                    self._prepare_checkout,
-                    owner_repo,
-                    base_dir,
-                    number=number,
-                    kind=kind,
-                    head_ref=str(frame.get("head_ref") or ""),
-                    worktree=bool(spawn.get("worktree", True)),
-                    is_pr=frame.get("is_pr") if "is_pr" in frame else None,
-                )
-            except ValueError as exc:
-                self.unrouted.record(src.target, who, event.text, reason=f"checkout failed: {exc}")
+                root = ensure_under_base(Path(base_dir).expanduser(), "base directory")
+                path = root / sid
+                path.mkdir(parents=True, exist_ok=False)
+            except (ValueError, OSError) as exc:
+                self.unrouted.record(src.target, who, event.text, reason=f"session directory failed: {exc}")
                 return
-            workspace = path
-            clone = str(Path(path).parent / "main") if bool(spawn.get("worktree", True)) else path
-            worktree = path if bool(spawn.get("worktree", True)) else ""
-        sid = uuid.uuid4().hex
+            workspace = str(path.resolve())
+        else:
+            workspace = self._provision_scratch(sid)
         engine = self.get_engine(sid, workspace=workspace, agent=persona)
         if engine is None:
             self.unrouted.record(src.target, who, event.text, reason="could not start the configured session (folder needed?)")
@@ -6084,8 +6646,7 @@ class SessionManager:
                 "event": kind,
                 "name": str(cfg.get("name") or ""),
                 "instructions": str(spawn.get("instructions") or ""),
-                "clone": clone,
-                "worktree": worktree,
+                "workspace_setup": "agent",
                 "owner_repo": owner_repo,
                 "number": number,
                 "approval_mode": mode.value,
@@ -6157,12 +6718,12 @@ class SessionManager:
         note = f" (note: {wake.note})" if getattr(wake, "note", "") else ""
         if wake.kind == "completion":
             return (
-                f"⏰ Wake — the job `{wake.job_id}` you were waiting on has completed{note}. "
+                f"Check-in — the job `{wake.job_id}` you were waiting on has completed{note}. "
                 "Continue where you left off."
             )
         if wake.kind == "event":
             return (
-                f"⏰ Wake — the event `{wake.event_key}` you were waiting on has fired{note}. "
+                f"Check-in — the event `{wake.event_key}` you were waiting on has fired{note}. "
                 "Continue where you left off."
             )
         # The fire time rides along so a woken session knows what time it is without a
@@ -6170,7 +6731,7 @@ class SessionManager:
         fired = getattr(wake, "fire_at", None)
         at = f" at {fired}" if fired else ""
         return (
-            f"⏰ Wake — the timer you set has fired{at}{note}. Continue where you left off."
+            f"Check-in — the timer you set has fired{at}{note}. Continue where you left off."
         )
 
     async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:

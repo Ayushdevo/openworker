@@ -50,6 +50,8 @@ class Agent:
     # Team identity: "lead" | "worker" | None (solo-only). Gates the board/journal
     # toolsets and staffing eligibility — solo personas are never team-staffable.
     team: Optional[str] = None
+    # Designer-authored context for Auto-approve, not an access grant.
+    approval_guidance: str = ""
 
     def build_tools(self, context: AgentContext) -> list:
         return list(self.tool_factory(context)) if self.tool_factory else []

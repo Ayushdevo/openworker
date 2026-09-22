@@ -78,6 +78,9 @@ const mergeAttachments = (cur: Attachment[], add: Attachment[]): Attachment[] =>
 };
 
 interface Props {
+  // Worker-pane variant: retain the shared input, attachments and send/stop;
+  // omit session rebinding, model changes and global native dictation controls.
+  compact?: boolean;
   mode: string;
   model: string;
   models?: string[];
@@ -122,6 +125,8 @@ interface Props {
   // The pending-approval card rendered above the input (plan / work-items / team / tool /
   // folder requests). Attended sessions only — Unattended parks the prompt in the Inbox.
   approvalSlot?: ReactNode;
+  statusSlot?: ReactNode;
+  teamSlot?: ReactNode;
   // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
   onOpenMemory?: () => void;
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
@@ -193,7 +198,7 @@ export function Composer(props: Props) {
   // UX-044: which "This session" submenu is open (bindings live server-side).
   const [bindMenu, setBindMenu] = useState<"memory" | "board" | null>(null);
   // Bindings need a session and a workspace surface (Chat has neither).
-  const sessionRows = Boolean(props.sessionId && props.workspace !== undefined);
+  const sessionRows = !props.compact && Boolean(props.sessionId && props.workspace !== undefined);
   const bindRow = (icon: "book" | "table", label: string, kind: "memory" | "board") => (
     <button
       className={
@@ -270,7 +275,7 @@ export function Composer(props: Props) {
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
   useEffect(() => {
-    if (!isTauri()) return;
+    if (props.compact || !isTauri()) return;
     const refresh = (event?: Event) => {
       const supplied = (event as CustomEvent<DictationStatus> | undefined)?.detail;
       if (supplied) {
@@ -397,6 +402,7 @@ export function Composer(props: Props) {
     const skill = prefixIntact ? pendingSkill!.name : undefined;
     const body = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
+      !props.connected ||
       (!body && attachments.length === 0 && !skill) ||
       (props.running && !props.gateOpen) ||
       dictation?.recording ||
@@ -547,6 +553,7 @@ export function Composer(props: Props) {
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
+      {props.statusSlot && <div className="max-w-3xl mx-auto mb-3">{props.statusSlot}</div>}
       {props.approvalSlot}
 
       {dictationError && (
@@ -581,6 +588,7 @@ export function Composer(props: Props) {
         </div>
       )}
 
+      {props.teamSlot}
       <div
         className={
           "composer max-w-3xl mx-auto rounded-2xl border border-ink/[0.08] bg-panel shadow-[0_1px_2px_rgba(0,0,0,0.03),0_4px_14px_-10px_rgba(0,0,0,0.08)]" +
@@ -629,6 +637,7 @@ export function Composer(props: Props) {
           </div>
         )}
         <textarea
+          aria-label={props.placeholder}
           ref={textareaRef}
           className="w-full block px-3.5 pt-3.5 pb-1.5 text-body"
           placeholder={
@@ -751,7 +760,7 @@ export function Composer(props: Props) {
           {/* model — a quiet chip, now for the session's whole life (§17 rev 2026-07-22:
               mid-session switching shipped, so the picker stays actionable; the topbar
               subtitle still states the current model). */}
-          {!dictation?.recording && (needsModel ? (
+          {!props.compact && !dictation?.recording && (needsModel ? (
             <button
               className="pill model-warn chip"
               onClick={() => props.onConnectModel?.()}
@@ -793,7 +802,7 @@ export function Composer(props: Props) {
           ))}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
-          {isTauri() && (
+          {!props.compact && isTauri() && (
             <button
               className={
                 iconBtn +

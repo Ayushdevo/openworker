@@ -4,10 +4,6 @@ import {
   announceInboxUnlock,
   createTempWorkspace,
   finalizeAutomationRun,
-  boardComment,
-  boardTransition,
-  fetchBoardAttachment,
-  getBoardItem,
   getArtifacts,
   getBoard,
   type Board,
@@ -88,6 +84,7 @@ import { SessionSetupRow } from "./components/SessionSetupRow";
 import { SendFolderDialog } from "./components/SendFolderDialog";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { reconcileResolvedGates, retireFinishedGate } from "./gateReconciliation";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
@@ -110,7 +107,11 @@ import { ToolRequestCard } from "./components/ToolRequestCard";
 import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
-import { BoardOverlay } from "./components/BoardPanel";
+import { TeamView, TeamQuickLook } from "./components/TeamView";
+import type { WorkerFilter } from "./teamRoster";
+import type { TeamSummary } from "./teamView";
+import { getTeamSummary } from "./api";
+import { TaskBoardContext, OPEN_TASK_EVENT } from "./components/TaskChip";
 import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
@@ -390,7 +391,13 @@ export function App() {
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   // Agent teams (OPE-96): board for the current session's workspace space.
   const [board, setBoard] = useState<Board | null>(null);
-  const [boardOpen, setBoardOpen] = useState(false);
+  const boardSessionRef = useRef(sessionId);
+  boardSessionRef.current = sessionId;
+  const [boardOwner, setBoardOwner] = useState("");
+  const [teamViewOpen, setTeamViewOpen] = useState(false);
+  const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
+  const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
+  const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
   // A rail row click deep-opens the overlay on that item's detail pane.
   const [boardDetailId, setBoardDetailId] = useState<number | null>(null);
   // # team chat overlay — opened from the team entry's chat row.
@@ -472,7 +479,7 @@ export function App() {
   // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
   // RightRail opens the viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
+    const show = () => { setRailHidden(false); setTeamViewOpen(false); };
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
@@ -483,6 +490,7 @@ export function App() {
     const show = () => {
       setRailHidden(false);
       setBoardRailKey((k) => k + 1);
+      setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamViewOpen(true);
     };
     window.addEventListener("ocw-open-board", show);
     return () => window.removeEventListener("ocw-open-board", show);
@@ -514,6 +522,11 @@ export function App() {
   // unattended session's blocking question/approval can be answered in context (resolving the
   // same item the Inbox shows; first responder wins).
   const [sessionInbox, setSessionInbox] = useState<InboxItem[]>([]);
+  const finishedGateCalls = useRef(new Map<string, Set<string>>());
+  const gateScope = `${machine || "local"}:${sessionId}`;
+  const pendingInbox = useCallback((inbox: InboxItem[]) => inbox.filter(it =>
+    it.state === "pending" && !(it.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(it.tool_call_id)),
+  ), [gateScope]);
   // Whether the active session is Unattended — when true, the agent's prompts route to the Inbox,
   // so we suppress the inline live cards (the Inbox / answer-in-context path shows them instead).
   // A ref too, because the WS event handler closes over stale state.
@@ -532,7 +545,7 @@ export function App() {
   };
   const resolveSessionInbox = async (id: string, resolution: string) => {
     await resolveInboxItem(id, resolution);
-    getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
+    getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
     refreshSessions(); // attention badge should drop right away
   };
   // MUST pick a folder before starting — requires_folder personas (git-bound Code, the
@@ -931,6 +944,7 @@ export function App() {
           ]);
           break;
         case "permission_required":
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           // Unattended → the backend parked it in the Inbox; don't also surface a live card.
           if (unattendedRef.current) break;
           setItems((p) => [...p, approvalItemFromPayload(d)]);
@@ -950,6 +964,7 @@ export function App() {
         case "team_proposed":
           // The staffing gate (agent teams) — approval pre-spawns the worker sessions.
           if (unattendedRef.current) break;
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           setItems((p) => [...p, teamItemFromPayload(d)]);
           break;
         case "connector_requested":
@@ -960,6 +975,7 @@ export function App() {
         case "items_proposed":
           // The decomposition gate — approval creates the items on the board.
           if (unattendedRef.current) break;
+          if (d.tool_call_id && finishedGateCalls.current.get(gateScope)?.has(d.tool_call_id)) break;
           setItems((p) => [...p, workItemsItemFromPayload(d)]);
           break;
         case "question_requested":
@@ -967,6 +983,27 @@ export function App() {
           setItems((p) => [...p, questionItemFromPayload(d)]);
           break;
         case "tool_finished":
+          if (d.tool_call_id) {
+            const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+            calls.add(d.tool_call_id);
+            finishedGateCalls.current.set(gateScope, calls);
+          }
+          setItems(p => retireFinishedGate(p, d.name, d.tool_call_id));
+          if (d.tool_call_id) {
+            setSessionInbox(p => p.filter(it => it.tool_call_id !== d.tool_call_id));
+          }
+          if (d.superseded_worker_call) {
+            // Retire exactly the decision whose worker prompt was answered
+            // elsewhere. The tool result remains as the non-action audit receipt.
+            setItems(p => p.filter(it => !(it.kind === "approval" &&
+              it.name === "decide_worker_call" && it.args?.call_id === d.superseded_worker_call)));
+            setSessionInbox(p => p.filter(it => !(it.data?.tool === "decide_worker_call" &&
+              it.data?.arguments?.call_id === d.superseded_worker_call)));
+          }
+          if (d.display?.team_created?.team_id) {
+            const c = d.display.team_created;
+            setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);
+          }
           setItems((p) =>
             updateLastTool(
               p,
@@ -1003,6 +1040,7 @@ export function App() {
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
         case "mode_notice":
+          if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
           // explainer once per session ever, one-line markers for later switches.
           setItems((p) => [
@@ -1104,7 +1142,7 @@ export function App() {
               setUsage(usageFromMessages(m));
             })
             .catch(() => {});
-          getInbox(sessionId, "pending").then(setSessionInbox).catch(() => {});
+          getInbox(sessionId, "pending").then(inbox => setSessionInbox(pendingInbox(inbox))).catch(() => {});
           return;
         }
         // Auto-send the pending message once the session connects ("Run now" prompts and
@@ -1205,34 +1243,76 @@ export function App() {
       setBoard(null);
       return;
     }
-    getBoard(sessionId).then(setBoard).catch(() => setBoard(null));
+    let canceled = false;
+    getBoard(sessionId).then(b => { if (!canceled) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => { if (!canceled) setBoard(null); });
+    return () => { canceled = true; };
   }, [agent, surface, sessionId, browserRefreshKey, running]);
 
-  const refreshBoard = () => getBoard(sessionId).then(setBoard).catch(() => {});
-  const moveBoardItem = async (item: number, to: string, comment = "") => {
-    await boardTransition(sessionId, item, to, comment);
-    await refreshBoard();
-  };
+  const refreshBoard = () => getBoard(sessionId).then(b => { if (boardSessionRef.current === sessionId) { setBoard(b); setBoardOwner(sessionId); } }).catch(() => {});
+  useEffect(() => {
+    const open = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.sessionId !== sessionId || d.space !== board?.space || !board?.items.some(i => i.id === d.id)) return;
+      setBoardDetailId(d.id); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false);
+    };
+    window.addEventListener(OPEN_TASK_EVENT, open);
+    return () => window.removeEventListener(OPEN_TASK_EVENT, open);
+  }, [sessionId, board]);
+
 
   // Seventeenth pass: the drawer's Team panel — this session's staff (workers whose
   // lead is the current session). The sidebar shows ONE entry per team; members live here.
   const curSession = sessions.find((s) => s.session_id === sessionId);
+  // Follow the stored team relationship, not browser history: a worker may
+  // have been opened directly, from the Inbox, or after a reload.
+  const workerLeadId = curSession?.team?.role === "worker"
+    ? curSession.team.lead_session
+    : undefined;
+  const workerLead = sessions.find((s) => s.session_id === workerLeadId);
   const teamMembers = sessions.filter(
     (s) => s.team?.role === "worker" && s.team.lead_session === sessionId,
   );
+
+  useEffect(() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); setTeamSummary(null); }, [sessionId]);
+  const activeTeamId = curSession?.team?.team_id;
+  useEffect(() => {
+    if (!activeTeamId || surface !== "session") { setTeamSummary(null); return; }
+    let canceled = false;
+    getTeamSummary(sessionId, activeTeamId).then(s => {
+      if (!canceled) { setTeamSummary(s); setBoard(b => b?.space === s.space ? { ...b, items: [...b.items.filter(i => !s.items.some(x => x.id === i.id)), ...s.items] } : b); }
+    }).catch(() => { if (!canceled) setTeamSummary(null); });
+    return () => { canceled = true; };
+  }, [sessionId, activeTeamId, surface, sessions, browserRefreshKey, running]);
+  const openTeamView = (id?: number) => { setBoardDetailId(id ?? null); setTeamWorkerId(null); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); };
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
   useEffect(() => {
     if (surface !== "session") return;
+    let canceled = false;
+    let request = 0;
     const load = () => {
-      getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
-      getUnattended(sessionId).then(markUnattended).catch(() => markUnattended(false));
+      const current = ++request;
+      getInbox(sessionId).then(inbox => {
+        if (canceled || current !== request) return;
+        // Persist authoritative resolutions too: another in-flight pending-only
+        // fetch or a late gate event must not resurrect an already answered call.
+        const calls = finishedGateCalls.current.get(gateScope) || new Set<string>();
+        for (const item of inbox) {
+          if (item.state === "resolved" && item.tool_call_id) calls.add(item.tool_call_id);
+        }
+        finishedGateCalls.current.set(gateScope, calls);
+        setSessionInbox(pendingInbox(inbox));
+        setItems(items => reconcileResolvedGates(items, inbox));
+      }).catch(() => {});
+      getUnattended(sessionId).then(value => {
+        if (!canceled && current === request) markUnattended(value);
+      }).catch(() => {});
     };
     load();
     const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [surface, sessionId, browserRefreshKey, markUnattended]);
+    return () => { canceled = true; clearInterval(t); };
+  }, [surface, sessionId, browserRefreshKey, markUnattended, pendingInbox, gateScope]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     // UX-029: folder enforcement AT SEND. A code-family session with no folder has no
@@ -1795,6 +1875,7 @@ export function App() {
   }
 
   return (
+    <TaskBoardContext.Provider value={{ board: boardOwner === sessionId ? board : null, sessionId }}>
     <div
       className={
         "app" +
@@ -2017,6 +2098,21 @@ export function App() {
                 </button>
               </div>
             )}
+            {workerLeadId && workerLeadId !== sessionId && (
+              <button
+                className="text-meta text-muted hover:text-ink shrink-0 px-2 py-1 disabled:opacity-50"
+                data-testid="back-to-lead"
+                onPointerDown={(e) => e.stopPropagation()}
+                disabled={!workerLead}
+                title={workerLead ? t("teamview.back_to_lead") : t("teamview.lead_unavailable")}
+                aria-label={t("teamview.back_to_lead")}
+                onClick={() => {
+                  if (workerLead) void selectSession(workerLead.session_id, workerLead.workspace, workerLead.agent);
+                }}
+              >
+                ← {t("teamview.lead")}
+              </button>
+            )}
             {/* §32: no session-settings row up here anymore — the §23 rest/hover/click glance
                 machinery retired with the drawer. "What can this touch" lives permanently on
                 the rail's Access section header; the panel toggle is the one entry. */}
@@ -2228,32 +2324,6 @@ export function App() {
                 }}
               />
             )}
-            {/* A scheduled agent must never read as a dead one: while a self-wake is
-                pending and no turn is running, say so and offer the obvious action. */}
-            {activeInfo?.liveness === "sleeping" && !running && (
-              <div className="sleep-strip" data-testid="sleep-strip">
-                <span className="sleep-dot" />
-                <span className="sleep-text">
-                  {t("app.sleep.label")}
-                  {activeInfo.sleeping_until
-                    ? t("app.sleep.until", {
-                        time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-                      })
-                    : ""}
-                  {activeInfo.team?.role === "lead"
-                    ? t("app.sleep.team_clause")
-                    : t("app.sleep.trigger_clause")}{" "}
-                  {t("app.sleep.talk_anytime")}
-                </span>
-                <button
-                  className="btn sm"
-                  data-testid="sleep-status-btn"
-                  onClick={() => send(t("app.sleep.status_prompt"))}
-                >
-                  {t("app.sleep.ask_status")}
-                </button>
-              </div>
-            )}
             {!connected && !booting && !currentRowOffline && !(isCloudMode() && !machine) && (
               <div className="reconnecting-strip" data-testid="session-reconnecting" role="status">
                 {machine ? t("misc.app.machine_reconnecting") : t("misc.app.reconnecting")}
@@ -2265,6 +2335,26 @@ export function App() {
               </div>
             )}
             <Composer
+              statusSlot={activeInfo?.liveness === "sleeping" && !running ? (
+                <div className="sleep-strip" data-testid="sleep-strip">
+                  <span className="sleep-dot" />
+                  <span className="sleep-text">
+                    {t("app.sleep.label")}
+                    {activeInfo.sleeping_until
+                      ? t("app.sleep.until", {
+                          time: new Date(activeInfo.sleeping_until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+                        }) : ""}
+                    {activeInfo.team?.role === "lead"
+                      ? t("app.sleep.team_clause") : t("app.sleep.trigger_clause")}{" "}
+                    {t("app.sleep.talk_anytime")}
+                  </span>
+                  <button className="btn sm" data-testid="sleep-status-btn"
+                    onClick={() => send(t("app.sleep.status_prompt"))}>
+                    {t("app.sleep.ask_status")}
+                  </button>
+                </div>
+              ) : undefined}
+              teamSlot={curSession?.team?.role === "lead" && teamSummary?.lead_session === sessionId ? <TeamQuickLook key={sessionId} summary={teamSummary} onOpen={openTeamView} machine={curSession?.machine_name} /> : undefined}
               mode={mode}
               // §11.6: a worker's approvals follow its lead — the picker is read-only for it.
               followsLead={curSession?.team?.role === "worker"}
@@ -2397,6 +2487,7 @@ export function App() {
             />
                   </div>
           <RightRail
+            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
@@ -2415,11 +2506,9 @@ export function App() {
             openAccessKey={accessKey}
             onOpenIntegrations={() => openSettings("connectors")}
             board={board}
-            onExpandBoard={() => setBoardOpen(true)}
-            onOpenBoardItem={(id) => {
-              setBoardDetailId(id);
-              setBoardOpen(true);
-            }}
+            onExpandBoard={() => openTeamView()}
+            onOpenBoardItem={openTeamView}
+            onOpenTeamView={() => openTeamView()}
             /* team serializes as {} for plain sessions — lead-ness needs an actual
                role, else every solo session loses its Progress panel (owner-hit
                2026-08-21: the rail showed nothing but "More"). */
@@ -2428,45 +2517,17 @@ export function App() {
               (curSession?.team?.role != null && curSession.team.role !== "worker")
             }
             teamMembers={teamMembers}
+            teamSummary={teamSummary?.lead_session === sessionId ? teamSummary : null}
+            teamMachine={curSession?.machine_name}
+            onOpenWorkers={(filter) => { setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(filter); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             teamChatEnabled={!!curSession?.team?.chat_enabled}
             teamChatUnread={curSession?.team?.chat_unread || 0}
             teamUsage={teamMembers.length ? teamUsage(usage, teamMembers) : undefined}
             onOpenTeamChat={() => setChatTeam(curSession?.team?.team_id || "")}
-            onOpenWorker={(w) => void selectSession(w.session_id, w.workspace, w.agent)}
+            onOpenWorker={(w) => { setBoardDetailId(null); setTeamWorkerId(w.session_id); setTeamWorkerFilter(null); setBoardRailKey(k => k + 1); setTeamViewOpen(true); setRailHidden(false); }}
             openBoardKey={boardRailKey}
           />
-          {boardOpen && board && board.space && (
-            <BoardOverlay
-              board={board}
-              onClose={() => {
-                setBoardOpen(false);
-                setBoardDetailId(null);
-              }}
-              onTransition={moveBoardItem}
-              onComment={(item, body) => boardComment(sessionId, item, body)}
-              loadItem={(id) => getBoardItem(sessionId, id)}
-              loadAttachment={(stored) => fetchBoardAttachment(sessionId, stored)}
-              onOpenWorker={(actor) => {
-                // The assignee is a team actor whose worker session the sidebar
-                // already knows — jump straight into its transcript.
-                const match =
-                  sessions.find(
-                    (s) =>
-                      s.team?.role === "worker" &&
-                      s.team?.actor === actor &&
-                      s.workspace === board.space
-                  ) ||
-                  sessions.find(
-                    (s) => s.team?.role === "worker" && s.team?.actor === actor
-                  );
-                if (!match) return;
-                setBoardOpen(false);
-                setBoardDetailId(null);
-                void selectSession(match.session_id, match.workspace, match.agent);
-              }}
-              initialItem={boardDetailId}
-            />
-          )}
+
         </div>
       </div>
       )}
@@ -2517,6 +2578,7 @@ export function App() {
         />
       )}
     </div>
+    </TaskBoardContext.Provider>
   );
 }
 
