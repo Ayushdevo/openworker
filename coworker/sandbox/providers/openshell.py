@@ -129,6 +129,13 @@ class OpenShellProvider:
 
     # -- lifecycle --------------------------------------------------------------------
     def create(self) -> None:
+        try:
+            self._create()
+        except Exception:
+            self.destroy()  # never leave a copied credential behind
+            raise
+
+    def _create(self) -> None:
         preflight()
         for root in self.roots:
             if not os.path.isdir(root["path"]):

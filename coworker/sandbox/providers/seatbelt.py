@@ -152,6 +152,13 @@ class SeatbeltProvider:
         return env
 
     def create(self) -> None:
+        try:
+            self._create()
+        except Exception:
+            self.destroy()  # never leave a copied credential behind
+            raise
+
+    def _create(self) -> None:
         preflight()
         os.makedirs(os.path.join(self._dir, "tmp", "cache"), exist_ok=True)
         if self.network:

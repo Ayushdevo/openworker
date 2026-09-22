@@ -83,7 +83,11 @@ class RunnerWorkspace(Workspace):
         if registry is not None:
             registry.reap()  # sandboxes left behind by a server that is gone
             registry.check_room()
-        provider.create()
+        try:
+            provider.create()
+        except Exception:
+            provider.destroy()  # a half-made sandbox may already hold copied credentials
+            raise
         try:
             self.client = RunnerClient(provider.open_runner)
             self.hello = self.client.connect()

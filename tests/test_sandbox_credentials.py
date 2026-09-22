@@ -205,3 +205,20 @@ def test_ssh_and_gh_copies_work_inside_seatbelt_and_ssh_goes_through_the_proxy(t
         ws.close()
         fake.close()
     assert not Path(provider.copied.home).exists()  # the copies died with the sandbox
+
+
+def test_a_failed_creation_leaves_no_copied_credential_behind(tmp_path, monkeypatch):
+    from coworker.sandbox.providers import seatbelt
+
+    home = _home(tmp_path)
+    grants = creds.granted([{"name": "ssh", "enabled": True}], home=str(home))
+    provider = seatbelt.SeatbeltProvider(roots=[{"path": str(tmp_path), "writable": True}], cwd=tmp_path, credentials=grants, network=False)
+    folder = provider._dir
+
+    def broken() -> None:
+        raise seatbelt.SeatbeltUnavailable("no sandbox today")
+
+    monkeypatch.setattr(seatbelt, "preflight", broken)
+    with pytest.raises(seatbelt.SeatbeltUnavailable):
+        provider.create()
+    assert not os.path.exists(folder)
