@@ -2388,6 +2388,20 @@ def create_app(manager: SessionManager) -> FastAPI:
             max_mb=b.get("pdf_max_mb"),
         )
 
+    @app.get("/v1/settings/sandbox")
+    def settings_get_sandbox() -> dict[str, Any]:
+        # Settings ▸ Sandbox (UX-051 A): provider, network profile, credential grants.
+        # Machine-level, read from the machine's config.toml.
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.snapshot()
+
+    @app.post("/v1/settings/sandbox")
+    def settings_set_sandbox(body: dict) -> dict[str, Any]:
+        from ..sandbox import settings as sandbox_settings
+
+        return sandbox_settings.update(body or {})
+
     @app.post("/v1/settings/compaction")
     def settings_set_compaction(body: dict) -> dict[str, Any]:
         # Auto-compaction overrides (OPE-27): threshold % of the context window, the

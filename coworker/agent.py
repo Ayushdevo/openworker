@@ -347,6 +347,7 @@ def build_engine(
             session_id=session_id or "",
             agent=agent.name,
             credentials=config.sandbox_credentials,
+            network_profile=config.sandbox_network_profile,
         )
         if ws is not None
         else None

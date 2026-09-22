@@ -182,6 +182,7 @@ def open_workspace(
     session_id: str = "",
     agent: str = "",
     credentials: Optional[list] = None,
+    network_profile: Optional[str] = None,
 ) -> Workspace:
     """The session's workspace for the configured provider. `credentials`: the machine's
     `sandbox_credentials` setting; the enabled entries are copied into the sandbox
@@ -201,12 +202,15 @@ def open_workspace(
     from .credentials import granted
 
     grants = granted(credentials)
+    from .network_profiles import DEFAULT_PROFILE, check
+
+    profile = check((network_profile or "").strip().lower() or DEFAULT_PROFILE)
     if name == SEATBELT:
         from .providers.seatbelt import SeatbeltProvider
         from .registry import SandboxRegistry
 
         return RunnerWorkspace(
-            SeatbeltProvider(roots=listed, cwd=str(cwd), credentials=grants),
+            SeatbeltProvider(roots=listed, cwd=str(cwd), credentials=grants, profile=profile),
             cwd=cwd,
             registry=SandboxRegistry(),
             session_id=session_id,
@@ -219,7 +223,7 @@ def open_workspace(
 
         label = "-".join(part for part in (session_id[:24], agent[:24]) if part)
         return RunnerWorkspace(
-            OpenShellProvider(roots=listed, cwd=str(cwd), label=label, credentials=grants),
+            OpenShellProvider(roots=listed, cwd=str(cwd), label=label, credentials=grants, profile=profile),
             cwd=cwd,
             registry=SandboxRegistry(),
             session_id=session_id,

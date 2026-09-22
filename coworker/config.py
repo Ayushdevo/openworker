@@ -124,6 +124,9 @@ class Config:
     # for the same reason as the provider. The shipped entries and their defaults are in
     # coworker/sandbox/credentials.py; an entry here edits or adds by name.
     sandbox_credentials: list[dict[str, Any]] = field(default_factory=list)
+    # Which hosts a sandbox may reach: a profile name from coworker/sandbox/network_profiles.py
+    # ("strict" when unset). Machine-level, like the provider.
+    sandbox_network_profile: Optional[str] = None
 
 
 _FIELDS = {
@@ -135,6 +138,7 @@ _FIELDS = {
     "tool_result_max_bytes",
     "sandbox_provider",
     "sandbox_credentials",
+    "sandbox_network_profile",
     "compaction_cap_tokens",
     "compaction_summary_max_tokens",
     "allowed_commands",
@@ -160,6 +164,7 @@ _FIELDS = {
 _GLOBAL_ONLY_FIELDS = {
     "sandbox_provider",
     "sandbox_credentials",
+    "sandbox_network_profile",
     "allowed_commands",
     "auto_allow",
     "allowed_domains",
@@ -185,6 +190,43 @@ def set_global_value(key: str, value: str, *, path: Optional[Path] = None) -> Pa
     kept = [line for line in lines if not re.match(rf"\s*{re.escape(key)}\s*=", line)]
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     target.write_text("\n".join([f'{key} = "{escaped}"', *kept]) + "\n", encoding="utf-8")
+    return target
+
+
+def set_global_tables(key: str, rows: list[dict[str, Any]], *, path: Optional[Path] = None) -> Path:
+    """Replace every `[[key]]` table in the machine's config.toml with `rows`, keeping the
+    rest of the file. Values may be strings, booleans, integers and lists of strings."""
+    if key not in _FIELDS:
+        raise ValueError(f"not a config key: {key}")
+    target = Path(path) if path is not None else global_config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lines = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
+    kept: list[str] = []
+    skipping = False
+    header = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*$")
+    for line in lines:
+        m = header.match(line)
+        if m:
+            skipping = m.group(1).strip() == key and line.strip().startswith("[[")
+        if not skipping:
+            kept.append(line)
+    while kept and not kept[-1].strip():
+        kept.pop()
+
+    def value(v: Any) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, (list, tuple)):
+            return "[" + ", ".join(value(str(x)) for x in v) + "]"
+        text = str(v).replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{text}"'
+
+    out = list(kept)
+    for row in rows:
+        out += ["", f"[[{key}]]"] + [f"{k} = {value(v)}" for k, v in row.items() if v is not None]
+    target.write_text("\n".join(out).lstrip("\n") + "\n", encoding="utf-8")
     return target
 
 
