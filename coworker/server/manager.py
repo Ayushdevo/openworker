@@ -8,6 +8,7 @@ sessions span folders.
 from __future__ import annotations
 
 import asyncio
+import threading
 import json
 import logging
 import os
@@ -303,6 +304,9 @@ class SessionManager:
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
         self._engines: dict[str, TurnEngine] = {}
+        # Sandboxes left behind by a server that died: removed once, in the background, at
+        # start (design doc, OPE-200 "sandbox lifetime"). Cheap when there are none.
+        threading.Thread(target=self._reap_sandboxes, name="sandbox-reap", daemon=True).start()
         # Sessions whose connector set changed mid-turn (§11.6): rebuilt at mark_idle.
         self._stale_engines: set[str] = set()
         # Sessions whose workspace was promoted mid-turn (workspace-scratch-design.md §5):
@@ -664,7 +668,7 @@ class SessionManager:
         if record:
             record.workspace = new_path
             self.session_store.save(record)
-        self._engines.pop(session_id, None)
+        self._drop_engine(session_id)
         self.session_store.touch_workspace(new_path)
         return {"ok": True, "path": new_path}
 
@@ -1227,7 +1231,7 @@ class SessionManager:
         if self.is_running(session_id):
             self._stale_engines.add(session_id)
             return
-        self._engines.pop(session_id, None)
+        self._drop_engine(session_id)
 
     def note_worker_waiting(self, session_id: str, tool_name: str, *, prompt_id: str = "", preview: str = "") -> None:
         """A team worker parked on a tool approval (the lead is Manual): tell the lead
@@ -5518,7 +5522,43 @@ class SessionManager:
             except Exception:
                 self.unregister_session_client(session_id, cb)
 
+    def _drop_engine(self, session_id: str) -> Optional[TurnEngine]:
+        """Forget a session's engine AND close its sandbox, so a rebuilt engine gets a fresh
+        one and a deleted session leaves no container behind."""
+        engine = self._engines.pop(session_id, None)
+        if engine is not None:
+            self._close_sandbox(engine)
+        return engine
+
+    @staticmethod
+    def _close_sandbox(engine: Any) -> None:
+        workspace = getattr(engine, "sandbox_workspace", None)
+        if workspace is None:
+            return
+        try:
+            workspace.close()
+        except Exception:
+            logger.warning("closing a session's sandbox failed", exc_info=True)
+
+    def _close_all_sandboxes(self) -> None:
+        for engine in list(self._engines.values()):
+            self._close_sandbox(engine)
+
+    @staticmethod
+    def _reap_sandboxes() -> None:
+        try:
+            from ..sandbox.registry import SandboxRegistry
+
+            removed = SandboxRegistry().reap()
+            if removed:
+                logger.info("removed %d sandbox(es) left behind by an earlier server", len(removed))
+        except Exception:
+            logger.debug("sandbox reap at start failed", exc_info=True)
+
     async def aclose(self) -> None:
+        # Sandboxes first: each holds a container or a sandboxed process that nobody else
+        # would remove once this server is gone.
+        await asyncio.to_thread(self._close_all_sandboxes)
         for handle in self._team_batch_handles.values():
             handle.cancel()
         self._team_batch_handles.clear()
@@ -6122,7 +6162,7 @@ class SessionManager:
             self.wakes.cancel_sleep(session_id, "the user stopped the session")
         if session_id in self._stale_engines:
             self._stale_engines.discard(session_id)
-            self._engines.pop(session_id, None)
+            self._drop_engine(session_id)
         self._last_turn_at = time.time()
         # Every turn path (WS, background delivery, durable resume) marks idle when it
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
@@ -6142,7 +6182,7 @@ class SessionManager:
             # Promotion happened this turn: drop the cached engine so the next turn
             # rebuilds with the new primary (relative anchoring, env snapshot, git).
             self._promotion_rebuild.discard(session_id)
-            self._engines.pop(session_id, None)
+            self._drop_engine(session_id)
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
@@ -7484,7 +7524,7 @@ class SessionManager:
     def delete_session(self, session_id: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
-        engine = self._engines.pop(session_id, None)
+        engine = self._drop_engine(session_id)
         if engine is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError
@@ -7948,7 +7988,7 @@ class SessionManager:
         self.session_store.set_bindings(session_id, bindings)
         # Rebind applies from the next engine build; drop the cached engine so the
         # next turn rebuilds with the new key (messages persist via the record).
-        self._engines.pop(session_id, None)
+        self._drop_engine(session_id)
         return {"ok": True, "bindings": bindings}
 
     def name_current_project(
