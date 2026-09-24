@@ -2088,6 +2088,44 @@ export async function getReviewerStats(sessionId: string): Promise<ReviewerStats
   return res.json();
 }
 
+// -- Settings ▸ Sandbox (UX-051 A): machine-level provider, network profile, credential grants --
+export interface SandboxCredentialEntry {
+  name: string;
+  title?: string;
+  path?: string;
+  hosts?: string[];
+  does?: string;
+  enabled: boolean;
+}
+export interface SandboxSettings {
+  platform: string;
+  provider: string; // "" = the default rule
+  effective_provider: string;
+  refused: string;
+  providers: { name: string; usable: boolean; why: string }[];
+  network_profile: string;
+  network_profiles: { name: string; hosts: string[] }[];
+  credentials: SandboxCredentialEntry[];
+  config_path: string;
+}
+
+export async function getSandboxSettings(machineId?: string | null): Promise<SandboxSettings> {
+  const res = await fetch(`${engineBase(machineId)}/v1/settings/sandbox`);
+  return res.json();
+}
+
+export async function setSandboxSettings(
+  patch: Partial<Pick<SandboxSettings, "provider" | "network_profile" | "credentials">>,
+  machineId?: string | null,
+): Promise<{ ok: boolean; error?: string } & Partial<SandboxSettings>> {
+  const res = await fetch(`${engineBase(machineId)}/v1/settings/sandbox`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
 export async function getSettings(machineId?: string | null): Promise<ModelSettings> {
   const res = await fetch(`${engineBase(machineId)}/v1/settings`);
   return res.json();

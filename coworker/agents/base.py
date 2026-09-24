@@ -23,6 +23,10 @@ class AgentContext:
     # When None, tools fall back to the single `workspace` root. Held by reference so runtime
     # add/remove of folders is seen by the file tools built from it.
     roots: Optional[list] = None
+    # The session's sandbox workspace (coworker.sandbox.workspace). In `direct` mode, or when
+    # None, the workspace tools run in this process as they always have; with a tool runner
+    # behind it, their execution goes there.
+    sandbox: Optional[Any] = None
 
 
 @dataclass
