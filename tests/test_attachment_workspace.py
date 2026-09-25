@@ -40,9 +40,11 @@ def test_invalid_payload_has_no_tool_path(tmp_path: Path):
 
 
 def test_symlinked_attachment_directory_cannot_escape_session(tmp_path: Path):
-    outside = tmp_path.parent / "outside-attachment-test"
-    outside.mkdir(exist_ok=True)
-    (tmp_path / "attachments").symlink_to(outside, target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    scratch = tmp_path / "session"
+    scratch.mkdir()
+    (scratch / "attachments").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError, match="leaves the session scratch"):
-        materialize_pdf_attachments([_pdf_part("form.pdf", b"%PDF-1.4\n")], str(tmp_path))
+        materialize_pdf_attachments([_pdf_part("form.pdf", b"%PDF-1.4\n")], str(scratch))
     assert not list(outside.iterdir())
