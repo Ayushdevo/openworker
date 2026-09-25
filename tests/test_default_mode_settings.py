@@ -50,3 +50,16 @@ def test_config_mode_is_used_without_preference(tmp_path, monkeypatch):
     assert manager.default_mode() is Mode.DISCUSS
     assert manager.set_default_mode("interactive")["ok"]
     assert manager.mode is Mode.INTERACTIVE
+
+
+def test_default_change_only_applies_to_new_sessions(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(data_dir=tmp_path / "data")
+    existing = manager.get_engine("existing", agent="chat")
+    assert existing is not None and existing.permissions.mode is Mode.INTERACTIVE
+
+    manager.set_default_mode("discuss")
+    assert manager.get_engine("existing", agent="chat") is existing
+    assert existing.permissions.mode is Mode.INTERACTIVE
+    fresh = manager.get_engine("fresh", agent="chat")
+    assert fresh is not None and fresh.permissions.mode is Mode.DISCUSS
