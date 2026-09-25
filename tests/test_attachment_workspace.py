@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from attachment_workspace import materialize_pdf_attachments
+from coworker.attachment_workspace import materialize_pdf_attachments
 
 
 def _pdf_part(name: str, raw: bytes) -> dict:
