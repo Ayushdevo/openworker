@@ -594,11 +594,7 @@ class SessionManager:
         record = self.session_store.load(session_id)
         team = (record.team if record else {}) or {}
         lead = str(team.get("lead_session") or "")
-        if (
-                team.get("role") == "worker"
-                and self._SESSION_ID_RE.fullmatch(lead)
-                and lead not in {".", "..", session_id}
-            ):
+        if team.get("role") == "worker" and self._SESSION_ID_RE.fullmatch(lead) and lead not in {".", "..", session_id}:
             d = self.scratch_base() / lead / "workers" / session_id
         d.mkdir(parents=True, exist_ok=True)
         return str(d.resolve())
