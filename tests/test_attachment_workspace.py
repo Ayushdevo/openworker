@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from coworker.attachment_workspace import materialize_pdf_attachments
+from coworker.attachments import build_user_content
 
 
 def _pdf_part(name: str, raw: bytes) -> dict:
@@ -48,3 +49,18 @@ def test_symlinked_attachment_directory_cannot_escape_session(tmp_path: Path):
     with pytest.raises(ValueError, match="leaves the session scratch"):
         materialize_pdf_attachments([_pdf_part("form.pdf", b"%PDF-1.4\n")], str(scratch))
     assert not list(outside.iterdir())
+
+
+def test_composer_pdf_content_exposes_exact_original_bytes(tmp_path: Path):
+    raw = b"%PDF-1.4\nsynthetic form\n%%EOF\n"
+    data_url = "data:application/pdf;base64," + base64.b64encode(raw).decode()
+    content = build_user_content("Use the form", [
+        {"kind": "pdf", "name": "form.pdf", "data_url": data_url},
+    ])
+    output = materialize_pdf_attachments(content, str(tmp_path))
+    assert output[1] is content[1]
+    assert output[1]["file"]["file_data"] == data_url
+    assert len(output) == 3
+    path = next((tmp_path / "attachments").glob("*.pdf"))
+    assert path.read_bytes() == raw
+    assert str(path) in output[2]["text"]
