@@ -7583,8 +7583,11 @@ class SessionManager:
                 attachment_dir = scratch / lead / "workers" / session_id / "attachments"
             else:
                 attachment_dir = scratch / session_id / "attachments"
-            if attachment_dir.is_dir() and attachment_dir.resolve() == attachment_dir:
-                shutil.rmtree(attachment_dir)
+            try:
+                if attachment_dir.is_dir() and attachment_dir.resolve() == attachment_dir:
+                    shutil.rmtree(attachment_dir)
+            except OSError:
+                pass  # a missing or inaccessible scratch folder must not fail deletion
         return {"ok": ok, "session_id": session_id}
 
     # -- provider proxy ---------------------------------------------------------
